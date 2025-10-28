@@ -222,7 +222,7 @@ Now we will start building components ([nodes](/oss/javascript/langgraph/graph-a
       temperature: 0,
     }).withStructuredOutput(gradeDocumentsSchema);
 
-    const score = await chain.invoke({
+    const score = await prompt.pipe(model).invoke({
       question: messages.at(0)?.content,
       context: messages.at(-1)?.content,
     });
@@ -235,13 +235,15 @@ Now we will start building components ([nodes](/oss/javascript/langgraph/graph-a
   ```
 2. Run this with irrelevant documents in the tool response:
   ```typescript
+  import { ToolMessage } from "@langchain/core/messages";
+
   const input = {
     messages: [
         new HumanMessage("What does Lilian Weng say about types of reward hacking?"),
         new AIMessage({
             tool_calls: [
                 {
-                    type: "tool_call"
+                    type: "tool_call",
                     name: "retrieve_blog_posts",
                     args: { query: "types of reward hacking" },
                     id: "1",
@@ -264,7 +266,7 @@ Now we will start building components ([nodes](/oss/javascript/langgraph/graph-a
         new AIMessage({
             tool_calls: [
                 {
-                    type: "tool_call"
+                    type: "tool_call",
                     name: "retrieve_blog_posts",
                     args: { query: "types of reward hacking" },
                     id: "1",

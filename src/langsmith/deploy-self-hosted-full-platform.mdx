@@ -80,6 +80,20 @@ As of v0.12.0, the `langgraphPlatform` option is deprecated. Use `config.deploym
 
     Your self-hosted infrastructure is now ready to create deployments.
 
+### (Optional) Configuring Additional Data Planes
+In addition to the existing data plane already created in the above steps, you can create more data planes that reside in different Kubernetes clusters.
+
+1. Read through the cluster organization guide in the [hybrid deployment documentation](/langsmith/hybrid#listeners) to understand how to best organize this.
+2. Verify the prerequisites mentioned in the [hybrid](/langsmith/deploy-hybrid#prerequisites) section are met for the new cluster. Note that for step 5, you need to enable egress to your [self-hosted LangSmith instance](/langsmith/self-host-usage#configuring-the-application-you-want-to-use-with-langsmith) instead of the managed control plane.
+3. Run the following commands against your LangSmith postgres instance to enable this feature:
+```
+update organizations set config = config || '{"enable_lgp_listeners_page": true}' where id = '<org id here>';
+update tenants set config = config || '{"langgraph_remote_reconciler_enabled": true}' where id = '<workspace id here>';
+```
+Note down the workspace id you choose as you will need this for future steps.
+
+4. Follow steps 2-6 in the [hybrid setup guide](/langsmith/deploy-hybrid#setup). The `config.langsmithWorkspaceId` value should be set to the workspace id you noted in prerequisites.
+
 ## Next steps
 
 Once your infrastructure is set up, you're ready to deploy applications. See the deployment guides in the [Deployment tab](/langsmith/deployments) for instructions on building and deploying your applications.

@@ -799,6 +799,8 @@ Dynamic response format selection adapts schemas based on user preferences, conv
   <Tab title="State">
     Configure structured output based on conversation state:
 
+python
+
     ```python
     from langchain.agents import create_agent
     from langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResponse
@@ -839,7 +841,7 @@ Dynamic response format selection adapts schemas based on user preferences, conv
         middleware=[state_based_output]
     )
     ```
-
+    :::
 
 
   </Tab>
@@ -958,6 +960,7 @@ Dynamic response format selection adapts schemas based on user preferences, conv
 
   </Tab>
 </Tabs>
+:::
 
 ## Tool Context
 

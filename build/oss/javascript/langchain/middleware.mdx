@@ -78,20 +78,62 @@ Automatically summarize conversation history when approaching token limits.
     - Applications where preserving full conversation context matters
 </Tip>
 
+The summarization middleware monitors message token counts and automatically summarizes older messages when thresholds are reached. You can configure when summarization triggers and how much context to preserve.
+
+**Trigger conditions** control when summarization runs. You can specify:
+- A single condition object (all properties must be met - AND logic)
+- An array of conditions (any condition must be met - OR logic)
+
+Each condition can use `fraction` (of model's context size), `tokens` (absolute count), or `messages` (message count). At least one property must be specified per condition.
+
+**Keep conditions** control how much context to preserve after summarization. Specify exactly one of:
+- `fraction` - Fraction of model's context size to keep
+- `tokens` - Absolute token count to keep
+- `messages` - Number of recent messages to keep
+
 
 
 ```typescript
 import { createAgent, summarizationMiddleware } from "langchain";
 
+// Single condition: trigger if tokens >= 4000 AND messages >= 10
 const agent = createAgent({
   model: "gpt-4o",
   tools: [weatherTool, calculatorTool],
   middleware: [
     summarizationMiddleware({
       model: "gpt-4o-mini",
-      maxTokensBeforeSummary: 4000, // Trigger summarization at 4000 tokens
-      messagesToKeep: 20, // Keep last 20 messages after summary
-      summaryPrompt: "Custom prompt for summarization...", // Optional
+      trigger: { tokens: 4000, messages: 10 },
+      keep: { messages: 20 },
+    }),
+  ],
+});
+
+// Multiple conditions: trigger if (tokens >= 5000 AND messages >= 3) OR (tokens >= 3000 AND messages >= 6)
+const agent2 = createAgent({
+  model: "gpt-4o",
+  tools: [weatherTool, calculatorTool],
+  middleware: [
+    summarizationMiddleware({
+      model: "gpt-4o-mini",
+      trigger: [
+        { tokens: 5000, messages: 3 },
+        { tokens: 3000, messages: 6 },
+      ],
+      keep: { messages: 20 },
+    }),
+  ],
+});
+
+// Using fractional limits based on model context size
+const agent3 = createAgent({
+  model: "gpt-4o",
+  tools: [weatherTool, calculatorTool],
+  middleware: [
+    summarizationMiddleware({
+      model: "gpt-4o-mini",
+      trigger: { fraction: 0.8 }, // Trigger at 80% of context size
+      keep: { fraction: 0.3 }, // Keep 30% of context size
     }),
   ],
 });
@@ -106,12 +148,26 @@ const agent = createAgent({
     Model for generating summaries. Can be a model identifier string (e.g., `'openai:gpt-4o-mini'`) or a `BaseChatModel` instance.
 </ParamField>
 
-<ParamField body="maxTokensBeforeSummary" type="number">
-    Token threshold for triggering summarization
+<ParamField body="trigger" type="object | object[]">
+    Conditions for triggering summarization. Can be:
+
+    - A single condition object (all properties must be met - AND logic)
+    - An array of condition objects (any condition must be met - OR logic)
+
+    Each condition can include:
+    - `fraction` (number): Fraction of model's context size (0-1)
+    - `tokens` (number): Absolute token count
+    - `messages` (number): Message count
+
+    At least one property must be specified per condition. If not provided, summarization will not trigger automatically.
 </ParamField>
 
-<ParamField body="messagesToKeep" type="number" default="20">
-    Recent messages to preserve
+<ParamField body="keep" type="object" default="{messages: 20}">
+    How much context to preserve after summarization. Specify exactly one of:
+
+    - `fraction` (number): Fraction of model's context size to keep (0-1)
+    - `tokens` (number): Absolute token count to keep
+    - `messages` (number): Number of recent messages to keep
 </ParamField>
 
 <ParamField body="tokenCounter" type="function">
@@ -119,11 +175,23 @@ const agent = createAgent({
 </ParamField>
 
 <ParamField body="summaryPrompt" type="string">
-    Custom prompt template. Uses built-in template if not specified.
+    Custom prompt template for summarization. Uses built-in template if not specified. The template should include `{messages}` placeholder where conversation history will be inserted.
 </ParamField>
 
-<ParamField body="summaryPrefix" type="string" default="## Previous conversation summary:">
-    Prefix for summary messages
+<ParamField body="trimTokensToSummarize" type="number" default="4000">
+    Maximum number of tokens to include when generating the summary. Messages will be trimmed to fit this limit before summarization.
+</ParamField>
+
+<ParamField body="summaryPrefix" type="string">
+    Prefix to add to the summary message. If not provided, a default prefix is used.
+</ParamField>
+
+<ParamField body="maxTokensBeforeSummary" type="number" deprecated>
+    **Deprecated:** Use `trigger: { tokens: value }` instead. Token threshold for triggering summarization.
+</ParamField>
+
+<ParamField body="messagesToKeep" type="number" deprecated>
+    **Deprecated:** Use `keep: { messages: value }` instead. Recent messages to preserve.
 </ParamField>
 
 
@@ -704,7 +772,13 @@ const agent = createAgent({
   middleware: [
     contextEditingMiddleware({
       edits: [
-        new ClearToolUsesEdit({ maxTokens: 1000 }), // Clear old tool uses
+        new ClearToolUsesEdit({
+          triggerTokens: 2000,      // Lower threshold for demo (default is 100K)
+          keep: 3,                  // Keep 3 most recent tool results
+          clearToolInputs: false,   // Keep tool call arguments for context
+          excludeTools: [],         // No tools excluded from clearing
+          placeholder: "[cleared]", // Placeholder for cleared results
+        }),
       ],
     }),
   ],
@@ -717,13 +791,33 @@ const agent = createAgent({
 
 
 <ParamField body="edits" type="ContextEdit[]" default="[new ClearToolUsesEdit()]">
-    Array of `ContextEdit` strategies to apply
+    Array of [`ContextEdit`](https://reference.langchain.com/javascript/interfaces/langchain.index.ContextEdit.html) strategies to apply
 </ParamField>
 
-**@[`ClearToolUsesEdit`] options:**
+**[`ClearToolUsesEdit`](https://reference.langchain.com/javascript/classes/langchain.index.ClearToolUsesEdit.html) options:**
 
-<ParamField body="maxTokens" type="number" default="1000">
-    Token count that triggers the edit
+<ParamField body="triggerTokens" type="number" default="100000">
+    Token count that triggers the edit. When the conversation exceeds this token count, older tool outputs will be cleared.
+</ParamField>
+
+<ParamField body="clearAtLeast" type="number" default="0">
+    Minimum number of tokens to reclaim when the edit runs. If set to 0, clears as much as needed.
+</ParamField>
+
+<ParamField body="keep" type="number" default="3">
+    Number of most recent tool results that must be preserved. These will never be cleared.
+</ParamField>
+
+<ParamField body="clearToolInputs" type="boolean" default="false">
+    Whether to clear the originating tool call parameters on the AI message. When `true`, tool call arguments are replaced with empty objects.
+</ParamField>
+
+<ParamField body="excludeTools" type="string[]" default="[]">
+    List of tool names to exclude from clearing. These tools will never have their outputs cleared.
+</ParamField>
+
+<ParamField body="placeholder" type="string" default="[cleared]">
+    Placeholder text inserted for cleared tool outputs. This replaces the original tool message content.
 </ParamField>
 
 

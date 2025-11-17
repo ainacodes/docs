@@ -420,7 +420,7 @@ def update_user_info(
     runtime: ToolRuntime[CustomContext, CustomState],
 ) -> Command:
     """Look up and update user info."""
-    user_id = runtime.context.user_id 
+    user_id = runtime.context.user_id
     name = "John Smith" if user_id == "user_123" else "Unknown user"
     return Command(update={  # [!code highlight]
         "user_name": name,
@@ -438,14 +438,23 @@ def greet(
     runtime: ToolRuntime[CustomContext, CustomState]
 ) -> str:
     """Use this to greet the user once you found their info."""
-    user_name = runtime.state["user_name"]
+    user_name = runtime.state.get("user_name", None)
+    if user_name is None:
+       return Command(update={
+            "messages": [
+                ToolMessage(
+                    "Please call the 'update_user_info' tool it will get and update the user's name.",
+                    tool_call_id=runtime.tool_call_id
+                )
+            ]
+        })
     return f"Hello {user_name}!"
 
 agent = create_agent(
     model="gpt-5-nano",
     tools=[update_user_info, greet],
     state_schema=CustomState, # [!code highlight]
-    context_schema=CustomContext,  
+    context_schema=CustomContext,
 )
 
 agent.invoke(
@@ -666,5 +675,5 @@ agent = create_agent(
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/short-term-memory.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

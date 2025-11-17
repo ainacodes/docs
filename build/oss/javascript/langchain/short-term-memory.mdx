@@ -79,10 +79,9 @@ You can extend @[`AgentState`] to add additional fields. Custom state schemas ar
 ```typescript
 import * as z from "zod";
 import { createAgent, createMiddleware } from "langchain";
-import { MessagesZodState, MemorySaver } from "@langchain/langgraph";
+import { MemorySaver } from "@langchain/langgraph";
 
 const customStateSchema = z.object({  // [!code highlight]
-    messages: MessagesZodState.shape.messages,  // [!code highlight]
     userId: z.string(),  // [!code highlight]
     preferences: z.record(z.string(), z.any()),  // [!code highlight]
 });  // [!code highlight]
@@ -96,7 +95,7 @@ const checkpointer = new MemorySaver();
 const agent = createAgent({
     model: "gpt-5",
     tools: [],
-    middleware: [stateExtensionMiddleware] as const,  // [!code highlight]
+    middleware: [stateExtensionMiddleware],  // [!code highlight]
     checkpointer,
 });
 
@@ -646,5 +645,5 @@ const agent = createAgent({
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/short-term-memory.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

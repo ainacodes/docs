@@ -324,6 +324,9 @@ For models that support [tool calling](/oss/python/langchain/models#tool-calling
 [Tools](/oss/python/langchain/tools) can generate [`ToolMessage`](https://reference.langchain.com/python/langchain/messages/#langchain.messages.ToolMessage) objects directly. Below, we show a simple example. Read more in the [tools guide](/oss/python/langchain/tools).
 
 ```python
+from langchain.messages import AIMessage
+from langchain.messages import ToolMessage
+
 # After a model makes a tool call
 ai_message = AIMessage(
     content=[],
@@ -1028,5 +1031,5 @@ Refer to the below guides to learn more:
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/messages.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

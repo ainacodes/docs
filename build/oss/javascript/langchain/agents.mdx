@@ -126,7 +126,7 @@ const dynamicModelSelection = createMiddleware({
 const agent = createAgent({
   model: "gpt-4o-mini", // Base model (used when messageCount ≤ 10)
   tools,
-  middleware: [dynamicModelSelection] as const,
+  middleware: [dynamicModelSelection],
 });
 ```
 
@@ -217,7 +217,7 @@ const agent = createAgent({
   tools: [
     /* ... */
   ],
-  middleware: [handleToolErrors] as const,
+  middleware: [handleToolErrors],
 });
 ```
 
@@ -494,5 +494,5 @@ For comprehensive middleware documentation including hooks like `beforeModel`, `
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/agents.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

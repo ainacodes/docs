@@ -83,7 +83,7 @@ We will need to select a chat model from LangChain's suite of integrations:
 Start by defining the tools that require structured inputs. In real applications, these would call actual APIs (Google Calendar, SendGrid, etc.). For this tutorial, you'll use stubs to demonstrate the pattern.
 
 ```python
-from langchain_core.tools import tool
+from langchain.tools import tool
 
 @tool
 def create_calendar_event(
@@ -439,7 +439,7 @@ A supervisor agent coordinates specialized sub-agents (calendar and email)
 that are wrapped as tools.
 """
 
-from langchain_core.tools import tool
+from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 
@@ -866,5 +866,5 @@ Learn about [handoffs](/oss/python/langchain/multi-agent#handoffs) for agent-to-
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/supervisor.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

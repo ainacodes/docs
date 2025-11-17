@@ -353,7 +353,7 @@ We'll implement each node as a simple function. Remember: nodes take state, do w
     from langgraph.graph import StateGraph, START, END
     from langgraph.types import interrupt, Command, RetryPolicy
     from langchain_openai import ChatOpenAI
-    from langchain_core.messages import HumanMessage
+    from langchain.messages import HumanMessage
 
     llm = ChatOpenAI(model="gpt-4")
 
@@ -740,5 +740,5 @@ This was an introduction to thinking about building agents with LangGraph. You c
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langgraph/thinking-in-langgraph.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

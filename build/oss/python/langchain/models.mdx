@@ -147,7 +147,7 @@ response = model.invoke(conversation)
 print(response)  # AIMessage("J'adore créer des applications.")
 ```
 ```python Message objects
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain.messages import HumanMessage, AIMessage, SystemMessage
 
 conversation = [
     SystemMessage("You are a helpful assistant that translates English to French."),
@@ -1198,5 +1198,5 @@ configurable_model.invoke(
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/models.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

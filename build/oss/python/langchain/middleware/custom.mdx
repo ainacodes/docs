@@ -556,7 +556,7 @@ class DynamicModelMiddleware(AgentMiddleware):
 ```python
 from langchain.agents.middleware import wrap_tool_call
 from langchain.tools.tool_node import ToolCallRequest
-from langchain_core.messages import ToolMessage
+from langchain.messages import ToolMessage
 from langgraph.types import Command
 from typing import Callable
 
@@ -584,7 +584,7 @@ def monitor_tool(
 ```python
 from langchain.tools.tool_node import ToolCallRequest
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import ToolMessage
+from langchain.messages import ToolMessage
 from langgraph.types import Command
 from typing import Callable
 
@@ -694,5 +694,5 @@ agent = create_agent(
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/middleware/custom.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

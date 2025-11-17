@@ -593,7 +593,7 @@ import { createAgent, todoListMiddleware } from "langchain";
 const agent = createAgent({
   model: "gpt-4o",
   tools: [readFile, writeFile, runTests],
-  middleware: [todoListMiddleware()] as const,
+  middleware: [todoListMiddleware()],
 });
 ```
 
@@ -1208,5 +1208,5 @@ The middleware integrates OpenAI's moderation endpoint to check content at diffe
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langchain/middleware/built-in.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

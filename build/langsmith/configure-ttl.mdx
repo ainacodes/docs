@@ -2,6 +2,7 @@
 title: How to add TTLs to your application
 sidebarTitle: Add TTLs to your application
 ---
+
 <Tip>
 **Prerequisites**
 This guide assumes familiarity with [LangSmith](/langsmith/home), [Persistence](/oss/python/langgraph/persistence), and [Cross-thread persistence](/oss/python/langgraph/persistence#memory-store) concepts.
@@ -88,6 +89,21 @@ You can configure TTLs for both checkpoints and store items in the same `langgra
 }
 ```
 
+## Configure per-thread TTL
+
+You can apply [TTL configurations per-thread](https://reference.langchain.com/python/langsmith/deployment/sdk/#langgraph_sdk.client.ThreadsClient.create).
+
+```python
+thread = await client.threads.create(
+    ttl={
+        "strategy": "delete",
+        "ttl": 43200  # 30 days in minutes
+    }
+)
+```
+
+
+
 ## Runtime overrides
 
 The default `store.ttl` settings from `langgraph.json` can be overridden at runtime by providing specific TTL values in SDK method calls like `get`, `put`, and `search`.
@@ -104,5 +120,5 @@ See the [langgraph.json CLI reference](https://langchain-ai.github.io/langgraph/
     [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/langsmith/configure-ttl.mdx)
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for    real-time answers.
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

@@ -1,0 +1,247 @@
+---
+title: Persistence
+---
+
+LangGraph has a built-in persistence layer that enables powerful capabilities including conversation memory, human-in-the-loop workflows, time travel, and fault tolerance. Persistence is implemented through two complementary mechanisms:
+
+* [**Checkpointers**](#checkpointers) - Save workflow state to threads for resumable, multi-turn interactions
+* [**Stores**](#stores) - Share data across threads for cross-session memory
+
+![Checkpoints](/oss/images/checkpoints.jpg)
+
+<Info>
+**LangGraph API handles persistence automatically**
+
+When using the LangGraph API, you don't need to implement or configure persistence manually. The API handles all persistence infrastructure for you behind the scenes.
+</Info>
+
+---
+
+## Checkpointers
+
+Checkpointers save snapshots of your graph's state at each execution step to a **thread** - a unique conversation or workflow session identified by a `thread_id`.
+
+### Key concepts
+
+#### Threads
+
+A thread represents a unique workflow session. When you invoke a graph with a `thread_id`, LangGraph saves checkpoints to that thread, enabling the graph to:
+- Resume from where it left off
+- Access historical states
+- Support multi-turn conversations
+
+
+
+```typescript
+const config = { configurable: { thread_id: "1" } };
+await graph.invoke(input, config);
+```
+
+
+#### Checkpoints
+
+A checkpoint is a snapshot of the graph state at a particular point in time. Each checkpoint contains:
+
+* `config`: Configuration associated with this checkpoint (including `thread_id` and `checkpoint_id`)
+* `values`: State values at this point in time
+* `next`: Tuple of node names to execute next
+* `metadata`: Additional information about this checkpoint (step number, source, writes)
+* `tasks`: Information about tasks to be executed
+
+Checkpoints are ordered chronologically, with the most recent checkpoint first when accessing history.
+
+### What checkpointers enable
+
+<CardGroup cols={2}>
+  <Card title="Memory" href="/oss/javascript/langgraph/memory" icon="brain" arrow="true">
+    Track context across multiple turns in a conversation.
+  </Card>
+
+  <Card title="Human-in-the-loop" href="/oss/javascript/langgraph/interrupts" icon="hand" arrow="true">
+    Pause workflows for human inspection, approval, or modification.
+  </Card>
+
+  <Card title="Time travel" href="/oss/javascript/langgraph/use-time-travel" icon="clock-rotate-left" arrow="true">
+    Replay prior executions and fork from historical states.
+  </Card>
+
+  <Card title="Fault tolerance" href="/oss/javascript/langgraph/durable-execution" icon="shield-check" arrow="true">
+    Resume workflows after failures without losing progress.
+  </Card>
+</CardGroup>
+
+### Implementation
+
+For detailed information on implementing checkpointers, including:
+- How to add checkpointers to your graph
+- Production database setup (Postgres, SQLite, Redis, MongoDB)
+- Checkpointing in subgraphs (useful for multi-agent systems)
+- Accessing your graph's state and state history
+- Managing memory (trimming, deleting, summarizing messages)
+
+See the [Memory guide](/oss/javascript/langgraph/memory#checkpointers).
+
+---
+
+## Stores
+
+While checkpointers save state to individual threads, **stores** enable you to share data **across threads**. This is useful for maintaining user preferences, facts, or any information that should persist across multiple conversation sessions.
+
+### How stores differ from checkpointers
+
+<Tabs>
+  <Tab title="Checkpointers">
+    **Thread-scoped persistence**
+
+    - State is tied to a specific `thread_id`
+    - Each thread maintains its own independent state
+    - Used for conversation history within a session
+    - Cannot share data across different threads
+  </Tab>
+
+  <Tab title="Stores">
+    **Cross-thread persistence**
+
+    - Data is organized by namespaces (tuples)
+    - Same data accessible from any thread
+    - Used for user preferences, facts, application-level data
+    - Supports semantic search for intelligent retrieval
+  </Tab>
+</Tabs>
+
+### Example: User preferences across conversations
+
+
+
+```typescript
+// Thread 1: User sets a preference
+const userId = "123";
+const namespace = [userId, "preferences"];
+await store.put(namespace, "theme", { value: "dark" });
+
+// Thread 2: Access the same preference
+// (Different conversation, but same user data)
+const preferences = await store.search(namespace);
+```
+
+
+### Implementation
+
+For detailed information on implementing stores, including:
+- How to add stores to your graph
+- Production database setup
+- Semantic search configuration
+- Usage patterns and best practices
+
+See the [Memory guide](/oss/javascript/langgraph/memory#stores).
+
+---
+
+## Checkpointer libraries
+
+LangGraph provides several checkpointer implementations for different use cases:
+
+
+
+* `@langchain/langgraph-checkpoint` - Base interface and in-memory implementation ([`MemorySaver`](https://langchain-ai.github.io/langgraphjs/reference/classes/checkpoint.MemorySaver.html))
+* `@langchain/langgraph-checkpoint-sqlite` - SQLite-backed persistence ([`SqliteSaver`](https://langchain-ai.github.io/langgraphjs/reference/classes/checkpoint_sqlite.SqliteSaver.html))
+* `@langchain/langgraph-checkpoint-postgres` - Postgres-backed persistence ([`PostgresSaver`](https://langchain-ai.github.io/langgraphjs/reference/classes/checkpoint_postgres.PostgresSaver.html))
+
+
+### Checkpointer interface
+
+
+
+Each checkpointer implements the [`BaseCheckpointSaver`](https://langchain-ai.github.io/langgraphjs/reference/classes/checkpoint.BaseCheckpointSaver.html) interface with the following methods:
+
+* `.put` - Store a checkpoint with its configuration and metadata
+* `.putWrites` - Store intermediate writes (pending writes)
+* `.getTuple` - Fetch a checkpoint for a given configuration
+* `.list` - List checkpoints matching given criteria
+
+
+For more details on the checkpointer interface and serialization, see the [Features](#features) section below.
+
+---
+
+## Features
+
+<AccordionGroup>
+  <Accordion title="Replay and time travel" icon="clock-rotate-left">
+    You can replay a prior graph execution by invoking with both a `thread_id` and a `checkpoint_id`:
+
+
+
+    ```typescript
+    const config = {
+      configurable: {
+        thread_id: "1",
+        checkpoint_id: "0c62ca34-ac19-445d-bbb0-5b4984975b2a",
+      },
+    };
+    await graph.invoke(null, config);
+    ```
+
+
+    LangGraph will replay steps **before** the checkpoint and re-execute steps **after** it. See the [time travel guide](/oss/javascript/langgraph/use-time-travel) for more details.
+
+    ![Replay](/oss/images/re_play.png)
+  </Accordion>
+
+  <Accordion title="Update state" icon="pen-to-square">
+
+
+    You can manually edit the graph state using `updateState`. This method accepts:
+
+    **`config`**: Thread to update (required `thread_id`, optional `checkpoint_id` to fork from a specific checkpoint)
+
+    **`values`**: State updates to apply. These are passed through [reducers](/oss/javascript/langgraph/graph-api#reducers) if defined:
+
+    ```typescript
+    // If state has a reducer for 'bar' channel:
+    await graph.updateState(config, { foo: 2, bar: ["b"] });
+    // Result: foo is overwritten, bar is appended to
+    ```
+
+    **`asNode`**: Apply update as if it came from a specific node (controls which node executes next)
+
+    ```typescript
+    await graph.updateState(config, { foo: 2 }, { asNode: "nodeA" });
+    ```
+
+    See the [time travel guide](/oss/javascript/langgraph/use-time-travel) for more details on forking state.
+
+
+    ![Update](/oss/images/checkpoints_full_story.jpg)
+  </Accordion>
+
+  <Accordion title="Durable execution" icon="arrows-rotate">
+    Persistence enables durable execution - the ability to pause and resume workflows even after interruptions, failures, or extended delays.
+
+    When using a checkpointer, your workflow can:
+    - Pause for human input and resume days later
+    - Recover from failures at the last successful checkpoint
+    - Avoid re-running successful operations
+
+    <Tip>
+    To ensure workflows are deterministic and can be consistently replayed, wrap side effects and non-deterministic operations inside [tasks](/oss/javascript/langgraph/functional-api#task).
+    </Tip>
+
+    See the [durable execution guide](/oss/javascript/langgraph/durable-execution) for details.
+  </Accordion>
+
+  <Accordion title="Checkpoint data" icon="lock">
+    Checkpointers use serialization to store state and support encryption for sensitive data.
+
+    For details on serialization options (including pickle fallback) and encryption configuration, see the [Checkpoint data section](/oss/javascript/langgraph/add-memory#checkpoint-data) in the Memory guide.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/langgraph/persistence.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

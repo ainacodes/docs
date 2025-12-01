@@ -42,9 +42,9 @@ In the [LangSmith UI](https://smith.langchain.com), ensure that you have an LLM 
   Agent Builder supports custom models. You can override the default Anthropic model by providing a different `modelId` and a matching secret name via `envVarName` (see “Custom models” for examples).
 </Note>
 
-## `AGENT_BUILDER_` secret prefix
+## Agent Builder specific secrets
 
-Secrets prefixed with `AGENT_BUILDER_` are prioritized over workspace secrets. This way, you can better track the usage of Agent Builder vs other parts of LangSmith which use the same secrets.
+Secrets prefixed with `AGENT_BUILDER_` are prioritized over workspace secrets within Agent Builder. This way, you can better track the usage of Agent Builder vs other parts of LangSmith which use the same secrets.
 
 If you have both `OPENAI_API_KEY` and `AGENT_BUILDER_OPENAI_API_KEY`, the `AGENT_BUILDER_OPENAI_API_KEY` secret will be used.
 

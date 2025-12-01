@@ -35,7 +35,7 @@ Use these built-in tools to give your agents access to email, calendars, chat, p
     </ul>
   </Card>
 
-  <div style={{ position: 'relative' }}>
+  <div style={{ position: 'relative', margin: 0, padding: 0 }}>
     <Card title="Search" icon="magnifying-glass">
       <ul>
         <li>Exa web search (optionally fetch page contents)</li>
@@ -76,7 +76,7 @@ Use these built-in tools to give your agents access to email, calendars, chat, p
     </ul>
   </Card>
 
-<Card title="GitHub" icon="github">
+  <Card title="GitHub" icon="github">
     PRs, issues, and content
     <ul>
       <li>List pull requests</li>
@@ -87,19 +87,14 @@ Use these built-in tools to give your agents access to email, calendars, chat, p
     </ul>
   </Card>
 
-  <div style={{ position: 'relative' }}>
-    <Card title="Twitter/X" icon="twitter">
-      <ul>
-        <li>Read a tweet by ID</li>
-        <li>Read recent posts from a list</li>
-      </ul>
-    </Card>
-    <div style={{ position: 'absolute', top: 16, right: 16 }}>
-      <Tooltip tip="Required keys: TWITTER_API_KEY, TWITTER_API_KEY_SECRET">
-        <Icon icon="key" size={16} />
-      </Tooltip>
-    </div>
-  </div>
+  <Card title="Pylon" icon="list-check">
+    Issue management
+    <ul>
+      <li>List issues</li>
+      <li>Get issue details</li>
+      <li>Update issues</li>
+    </ul>
+  </Card>
 
   <Card title="Web utilities" icon="globe">
     <ul>
@@ -107,6 +102,8 @@ Use these built-in tools to give your agents access to email, calendars, chat, p
       <li>Extract image URLs and metadata</li>
       <li>Notify user (for confirmations/updates)</li>
     </ul>
+  </Card>
+
   <Card title="Google Sheets" icon="google">
     Spreadsheets
     <ul>
@@ -122,13 +119,17 @@ Use these built-in tools to give your agents access to email, calendars, chat, p
     </ul>
   </Card>
 
-  <Card title="Pylon" icon="list-check">
-    Issue management
-    <ul>
-      <li>List issues</li>
-      <li>Get issue details</li>
-      <li>Update issues</li>
-    </ul>
-  </Card>
-  </Card>
+  <div style={{ position: 'relative', margin: 0, padding: 0 }}>
+    <Card title="Twitter/X" icon="twitter">
+      <ul>
+        <li>Read a tweet by ID</li>
+        <li>Read recent posts from a list</li>
+      </ul>
+    </Card>
+    <div style={{ position: 'absolute', top: 16, right: 16 }}>
+      <Tooltip tip="Required keys: TWITTER_API_KEY, TWITTER_API_KEY_SECRET">
+        <Icon icon="key" size={16} />
+      </Tooltip>
+    </div>
+  </div>
 </CardGroup>

@@ -406,13 +406,6 @@ The key mechanism is using @[`Command`] to update state fields that control whic
 
 In the **custom workflow** architecture, agents are connected via deterministic transitions defined at graph construction time. The flow between agents is explicit and predictable.
 
-**Key characteristics:**
-
-* **Deterministic flow**: Transitions are defined explicitly via graph edges
-* **Predictable execution**: You always know which agent runs next
-* **No LLM routing decisions**: The graph structure controls flow, not LLM calls
-* **Pipeline-style processing**: Each agent processes and passes to the next
-
 Use the workflow pattern when you have a **fixed sequence** of processing steps, agents are **independent** and don't need to be aware of each other, or you want **predictable, debuggable** execution.
 
 <Tabs>

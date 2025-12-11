@@ -2,31 +2,216 @@
 title: Multi-agent
 ---
 
-**Multi-agent systems** break a complex application into multiple specialized agents that work together to solve problems.
-Instead of relying on a single agent to handle every step, **multi-agent architectures** allow you to compose smaller, focused agents into a coordinated workflow.
+Multi-agent systems break complex applications into coordinated components. **Importantly, "multi-agent" doesn't necessarily mean multiple distinct agents** — a single agent with dynamic behavior can achieve similar capabilities.
 
-Multi-agent systems are useful when:
+When developers say they need "multi-agent," they're usually looking for one or more of these capabilities:
+
+* **Context management**: Provide specialized knowledge without overwhelming the model's context window. If context were infinite and latency zero, you could dump all knowledge into a single prompt — but since it's not, you need patterns to selectively surface relevant information.
+* **Distributed development**: Allow different teams to develop and maintain capabilities independently, composing them into a larger system with clear boundaries and independent testing.
+* **Parallelization**: Spawn specialized workers for subtasks and execute them concurrently.
+
+## When to use multi-agent
+
+Multi-agent patterns are useful when:
 
 * A single agent has too many [tools](/oss/langchain/tools) and makes poor decisions about which to use.
 * [Context](/oss/concepts/context) or [memory](/oss/langchain/short-term-memory) grows too large for one agent to track effectively.
 * Tasks require **specialization** (e.g., a planner, researcher, math expert).
 * You need to **enforce sequential constraints** — unlocking capabilities only after certain conditions are met.
-* Different teams need to **develop and maintain agents independently**.
+* Different teams need to **develop and maintain capabilities independently**.
 
-## Architectures
+## Patterns
 
-There are four main architectures for building multi-agent systems, each suited to different use cases:
+There are several patterns for building multi-agent capabilities, each addressing different needs. These patterns can be **mixed and matched** — you're not limited to choosing just one.
 
-| Architecture | How it works | Best for |
-|--------------|--------------|----------|
-| [**Supervisor**](#supervisor) | A central agent calls sub-agents as tools | Task orchestration, parallel execution |
-| [**Dynamic agent**](#dynamic-agent) | One agent with dynamically changing prompts/tools based on state | Multi-stage conversations, sequential unlocking |
-| [**Workflow**](#workflow) | Agents connected via deterministic transitions | Pipelines, structured processing |
-| [**Skills**](#skills) | Specialized prompts invoked on-demand | Progressive disclosure, team distribution |
+### Sub-agents as tools
 
-<Tip>
-    You can mix architectures! For example, a **supervisor** can manage **workflow** sub-graphs, or a **dynamic agent** can invoke **skills** at certain stages.
-</Tip>
+In this pattern, you spawn specialized agents by exposing them as callable tools to a main agent. The main agent decides when to invoke each sub-agent, what input to provide, and how to combine results.
+
+:::python
+```python
+from langchain.tools import tool
+from langchain.agents import create_agent
+
+subagent = create_agent(model="...", tools=[...])
+
+@tool("subagent_name", description="When to call this agent")
+def call_subagent(query: str):
+    result = subagent.invoke({
+        "messages": [{"role": "user", "content": query}]
+    })
+    return result["messages"][-1].content
+
+main_agent = create_agent(model="...", tools=[call_subagent, ...])
+```
+:::
+:::js
+```typescript
+import { createAgent, tool } from "langchain";
+import * as z from "zod";
+
+const subagent = createAgent({...});
+
+const callSubagent = tool(
+  async ({ query }) => {
+    const result = await subagent.invoke({
+      messages: [{ role: "user", content: query }]
+    });
+    return result.messages.at(-1)?.text;
+  },
+  {
+    name: "subagent_name",
+    description: "When to call this agent",
+    schema: z.object({ query: z.string() })
+  }
+);
+
+const mainAgent = createAgent({ model, tools: [callSubagent, ...] });
+```
+:::
+
+**Enables:**
+- **Parallelization**: The main agent can invoke multiple sub-agents in a single turn
+- **Context management**: Each sub-agent has isolated context, preventing the main agent from being overwhelmed
+- **Specialization**: Each sub-agent can have domain-specific tools and prompts
+
+**Used in**: [Supervisor pattern](#supervisor)
+
+
+### Skills / Progressive disclosure
+
+Skills are specialized prompts that an agent can look up and invoke at runtime. Rather than loading all specialized knowledge upfront, the agent progressively discovers capabilities as needed.
+
+```python
+# Skills are typically stored and loaded dynamically
+skill = load_skill("python_expert")
+# The skill contains specialized prompts, tools, and examples
+# that augment the agent's behavior for this task
+```
+
+**Enables:**
+- **Context management**: Only load specialized knowledge when relevant
+- **Distributed development**: Teams can develop skills independently
+- **Specialization**: Each skill provides deep expertise in a specific domain
+
+**Used in**: [Skills pattern](#skills)
+
+<Note>
+Skills documentation is under active development as part of the [deep-agents](https://github.com/langchain-ai/deep-agents) project.
+</Note>
+
+
+### Memory-based behavior
+
+This pattern changes an agent's runtime behavior based on its state or conversation history. The agent's available tools and prompts adapt dynamically based on what it has observed or done.
+
+:::python
+```python
+from langchain.agents import AgentState, create_agent
+from langchain.tools import tool, ToolRuntime
+from langgraph.types import Command
+
+class SupportState(AgentState):
+    current_stage: str = "triage"
+    warranty_id: str = ""
+
+@tool
+def transfer_to_specialist(runtime: ToolRuntime[None, SupportState]) -> Command:
+    """Transfer to specialist after collecting warranty info."""
+    return Command(update={"current_stage": "specialist"})
+
+# Use middleware to dynamically configure agent based on current_stage
+agent = create_agent(
+    model,
+    tools=[transfer_to_specialist, ...],
+    state_schema=SupportState
+)
+```
+:::
+:::js
+```typescript
+import { tool, createAgent } from "langchain";
+import { Command } from "@langchain/langgraph";
+
+const SupportState = z.object({
+  currentStage: z.string().default("triage"),
+  warrantyId: z.string().default("")
+});
+
+const transferToSpecialist = tool(
+  async (_, config) => {
+    return new Command({
+      update: { currentStage: "specialist" }
+    });
+  },
+  {
+    name: "transfer_to_specialist",
+    description: "Transfer to specialist after collecting warranty info"
+  }
+);
+
+const agent = createAgent({
+  model,
+  tools: [transferToSpecialist, ...],
+  stateSchema: SupportState
+});
+```
+:::
+
+**Enables:**
+- **Sequential constraints**: Unlock capabilities only after preconditions are met
+- **Context management**: Control what information is available at each stage
+- **Specialization**: Different behavior at different stages of the conversation
+
+**Used in**: [Dynamic agent pattern](#dynamic-agent)
+
+
+### Router
+
+The router pattern directs user input to the appropriate specialized agent. There are two main implementation approaches:
+
+#### Stateful routing
+
+Track which agent is active in persistent state. Agents hand off control via tool calls that update the active agent.
+
+```python
+# Agent A calls transfer_to_agent_b() tool
+# → Updates state: {"active_agent": "agent_b"}
+# → Next turn routes to Agent B
+```
+
+**Best for**: Multi-stage conversations where context persists across turns
+
+#### Stateless routing
+
+On every user input, run a classifier to determine which agent should handle it. No state persists between turns.
+
+```python
+# User message → Classifier → Route to appropriate agent
+# Each agent processes independently
+```
+
+**Best for**: Independent, deterministic workflows where agents don't need shared context
+
+**Enables:**
+- **Direct user conversation**: Each agent can interact with users directly
+- **Distributed development**: Teams develop agents independently
+- **Specialization**: Route to the right expert for each query
+
+**Routing is used in**: [Dynamic agent pattern](#dynamic-agent) (stateful), [Workflow pattern](#workflow) (stateless)
+
+
+### Mixing patterns
+
+These patterns aren't mutually exclusive. Real systems often combine multiple approaches:
+
+- A **supervisor** agent (sub-agents as tools) can invoke **skills** for specialized tasks
+- A **dynamic agent** (memory-based behavior) can spawn **sub-agents** for parallel work
+- A **router** can direct to agents that each use **skills**
+
+The key is understanding what capabilities you need and selecting the appropriate pattern(s) to achieve them.
+
+## Example architectures
 
 ### Supervisor
 
@@ -604,37 +789,54 @@ Skills documentation is coming soon. This pattern is being developed as part of 
 </Note>
 
 
-## Choosing an architecture
+## Choosing patterns
 
-Use this guide to select the right architecture:
+Use this table to select patterns based on your requirements:
 
-```
-Do sub-agents need to converse directly with users?
-├── Yes → Do you need to enforce sequential constraints?
-│         ├── Yes → Dynamic agent
-│         └── No → Skills
-└── No → Do you need deterministic flow between agents?
-         ├── Yes → Workflow
-         └── No → Supervisor
-```
-
-**Additional considerations:**
-
-| Question | If yes, consider... |
-|----------|---------------------|
-| Do sub-agents need to be invoked in parallel? | Supervisor |
-| Do you need to persist state for sub-agents? | Dynamic agent (or stateful tools in Supervisor) |
-| Do you want agents developed independently by different teams? | Skills |
-| Do you need predictable, debuggable execution? | Workflow |
-| Do you want to coordinate multiple sub-agents in one pass? | Supervisor (or Skills if no constraints) |
+| Requirement | Pattern(s) | Example architecture(s) |
+|-------------|--------------|---------------------------|
+| **Parallel execution** of subtasks | Sub-agents as tools | [Supervisor](#supervisor) |
+| **Sequential constraints** (action A before B) | Memory-based behavior | [Dynamic agent](#dynamic-agent) |
+| **Agents converse directly** with users | Router (stateful or stateless) OR Skills | [Dynamic agent](#dynamic-agent), [Workflow](#workflow), [Skills](#skills) |
+| **Specialized knowledge** per domain | Sub-agents as tools OR Skills | [Supervisor](#supervisor), [Skills](#skills) |
+| **Distributed team development** | Skills OR Router | [Skills](#skills), [Dynamic agent](#dynamic-agent) |
+| **Predictable, debuggable flow** | Router (stateless) | [Workflow](#workflow) |
+| **Context management** for many tools | Sub-agents as tools OR Skills | [Supervisor](#supervisor), [Skills](#skills) |
+| **Coordinate multiple agents** in one pass | Sub-agents as tools | [Supervisor](#supervisor) |
+| **Persistent state** across turns | Memory-based behavior OR Router (stateful) | [Dynamic agent](#dynamic-agent) |
+| **Non-blocking sub-agent execution** | Custom (LangGraph API loopback)* | - |
 
 <Note>
 **Non-blocking sub-agent execution**
 
-Currently, LangGraph doesn't have built-in support for non-blocking sub-agent execution. If you have a use case that requires this (e.g., kicking off a long-running sub-agent and continuing with other work), please [file an issue](https://github.com/langchain-ai/langgraph/issues) describing your use case.
+LangGraph doesn't currently have built-in support for non-blocking sub-agent execution. If you have a use case that requires this (e.g., kicking off a long-running sub-agent and continuing with other work), one approach is using the LangGraph API server with loopback calls — exposing tools that allow an agent to start a run and check on its status asynchronously.
 
-One possible approach is using the LangGraph API server with loopback calls — exposing tools that allow an agent to start a run and check on its status asynchronously.
+If this is a critical requirement for your use case, please [file an issue](https://github.com/langchain-ai/langgraph/issues) describing your needs.
 </Note>
+
+### Example: Choosing for a customer support system
+
+Let's say you're building a customer support chatbot:
+
+**Requirements:**
+- Agents must converse directly with users ✓
+- Need to collect warranty ID before allowing refunds (sequential constraint) ✓
+- Different teams maintain triage vs. specialist logic (distributed development) ✓
+
+**Solution:** Router (stateful) + Memory-based behavior → **Dynamic agent pattern**
+
+The triage agent collects information, updates state when preconditions are met, then hands off to a specialist agent.
+
+---
+
+**Requirements:**
+- Need to query database, search docs, and analyze logs in parallel ✓
+- Main agent coordinates results ✓
+- Sub-agents don't need to chat with users directly ✓
+
+**Solution:** Sub-agents as tools → **Supervisor pattern**
+
+The supervisor agent calls specialized sub-agents as tools and synthesizes their results.
 
 
 ## Communication between agents

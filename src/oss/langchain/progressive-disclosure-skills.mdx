@@ -153,10 +153,10 @@ First, define the structure for skills. Each skill has a name, a brief descripti
 ```python
 from typing import TypedDict
 
-class Skill(TypedDict):
+class Skill(TypedDict):  # [!code highlight]
     """A skill that can be progressively disclosed to the agent."""
     name: str  # Unique identifier for the skill
-    description: str  # Brief description shown in system prompt (1-2 sentences)
+    description: str  # 1-2 sentence description to show in system prompt
     content: str  # Full skill content with detailed instructions
 ```
 
@@ -215,25 +215,14 @@ Always verify trip dates, destination, and get manager approval before booking."
 
 </Accordion>
 
-## 2. Create skill discovery tools
+## 2. Create skill discovery tool
 
-Create a function to list available skills (we'll call this to build the system prompt) and a tool to load full skill content on-demand:
+Create a tool to load full skill content on-demand:
 
 ```python
 from langchain.tools import tool
 
-def list_available_skills() -> str:
-    """Format skill descriptions for the system prompt.
-
-    Returns a string listing all available skills with their brief descriptions.
-    """
-    skills_list = []
-    for skill in SKILLS:
-        skills_list.append(f"- **{skill['name']}**: {skill['description']}")
-    return "\n".join(skills_list)
-
-
-@tool
+@tool  # [!code highlight]
 def load_skill(skill_name: str) -> str:
     """Load the full content of a skill into the agent's context.
 
@@ -247,14 +236,14 @@ def load_skill(skill_name: str) -> str:
     # Find and return the requested skill
     for skill in SKILLS:
         if skill["name"] == skill_name:
-            return f"Loaded skill: {skill_name}\n\n{skill['content']}"
+            return f"Loaded skill: {skill_name}\n\n{skill['content']}"  # [!code highlight]
 
     # Skill not found
     available = ", ".join(s["name"] for s in SKILLS)
     return f"Skill '{skill_name}' not found. Available skills: {available}"
 ```
 
-The `list_available_skills()` function formats the lightweight skill descriptions that we'll inject into the system prompt. The `load_skill` tool returns the full skill content as a string, which becomes part of the conversation as a ToolMessage.
+The `load_skill` tool returns the full skill content as a string, which becomes part of the conversation as a ToolMessage.
 
 ## 3. Build skill middleware
 
@@ -265,43 +254,26 @@ This guide demonstrates creating custom middleware. For a comprehensive guide on
 </Note>
 
 ```python
-from langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResponse, AgentMiddleware
+from langchain.agents.middleware import ModelRequest, ModelResponse, AgentMiddleware
 from langchain_core.messages import SystemMessage
 from typing import Callable
 
-class SkillMiddleware(AgentMiddleware):
+class SkillMiddleware(AgentMiddleware):  # [!code highlight]
     """Middleware that injects skill descriptions into the system prompt."""
 
     # Register the load_skill tool as a class variable
-    tools = [load_skill]
+    tools = [load_skill]  # [!code highlight]
 
-    def __init__(self, skills_prompt: str):
-        """Initialize with the skills prompt addendum.
+    def __init__(self):
+        """Initialize and generate the skills prompt from SKILLS."""
+        # Build skills prompt from the SKILLS list
+        skills_list = []
+        for skill in SKILLS:
+            skills_list.append(
+                f"- **{skill['name']}**: {skill['description']}"
+            )
+        self.skills_prompt = "\n".join(skills_list)
 
-        Args:
-            skills_prompt: Formatted string describing available skills
-        """
-        self.skills_prompt = skills_prompt
-
-    @wrap_model_call
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-        """Async: Inject skill descriptions into system prompt."""
-        # Build the skills addendum
-        skills_addendum = f"\n\n## Available Skills\n\n{self.skills_prompt}\n\nUse the load_skill tool when you need detailed information about handling a specific type of request."
-
-        # Append to system message content blocks
-        new_content = list(request.system_message.content_blocks) + [
-            {"type": "text", "text": skills_addendum}
-        ]
-        new_system_message = SystemMessage(content=new_content)
-
-        return await handler(request.override(system_message=new_system_message))
-
-    @wrap_model_call
     def wrap_model_call(
         self,
         request: ModelRequest,
@@ -309,15 +281,18 @@ class SkillMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """Sync: Inject skill descriptions into system prompt."""
         # Build the skills addendum
-        skills_addendum = f"\n\n## Available Skills\n\n{self.skills_prompt}\n\nUse the load_skill tool when you need detailed information about handling a specific type of request."
+        skills_addendum = ( # [!code highlight]
+            f"\n\n## Available Skills\n\n{self.skills_prompt}\n\n" # [!code highlight]
+            "Use the load_skill tool when you need detailed information " # [!code highlight]
+            "about handling a specific type of request." # [!code highlight]
+        )
 
         # Append to system message content blocks
         new_content = list(request.system_message.content_blocks) + [
             {"type": "text", "text": skills_addendum}
         ]
         new_system_message = SystemMessage(content=new_content)
-
-        return handler(request.override(system_message=new_system_message))
+        return request.override(system_message=new_system_message)
 ```
 
 The middleware appends skill descriptions to the system prompt, making the agent aware of available skills without loading their full content. The `load_skill` tool is registered as a class variable, making it available to the agent.
@@ -330,17 +305,11 @@ Now create the agent with the skill middleware and a checkpointer for state pers
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 
-# Generate the skills prompt addendum
-skills_prompt = list_available_skills()
-
-# Create skill middleware instance
-skill_middleware = SkillMiddleware(skills_prompt=skills_prompt)
-
 # Create the agent with skill support
 agent = create_agent(
     model,
     system_prompt="You are a helpful employee support assistant.",
-    middleware=[skill_middleware],
+    middleware=[SkillMiddleware()],  # [!code highlight]
     checkpointer=InMemorySaver(),
 )
 ```
@@ -359,8 +328,8 @@ thread_id = str(uuid.uuid4())
 config = {"configurable": {"thread_id": thread_id}}
 
 # Ask about expense reporting
-result = agent.invoke(
-    {"messages": [{"role": "user", "content": "I need to submit an expense report for a $150 dinner. What information do I need to provide?"}]},
+result = agent.invoke(  # [!code highlight]
+    {"messages": [{"role": "user", "content": "I need to submit an expense report for a $150 dinner. What information do I need to provide?"}]},  # [!code highlight]
     config
 )
 

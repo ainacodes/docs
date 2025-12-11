@@ -13,16 +13,28 @@ Multi-agent systems are useful when:
 
 ## Multi-agent patterns
 
-Multi-agent systems enable you to build sophisticated applications by combining specialized agents. There are two main patterns:
+Multi-agent systems enable you to build sophisticated applications by combining specialized agents. There are three main patterns:
 
 | Pattern                           | How it works                                                                                                                                                     | Control flow                                               | Example use case                                 |
 |-----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|--------------------------------------------------|
-| [**Tool calling**](#tool-calling) | A **supervisor** agent calls other agents as *tools*. The “tool” agents don’t talk to the user directly — they just run their task and return results.                  | **Centralized**: all routing passes through the calling agent. | Task orchestration, structured workflows        |
+| [**Tool calling**](#tool-calling) | A **supervisor** agent calls other agents as *tools*. The "tool" agents don't talk to the user directly — they just run their task and return results.                  | **Centralized**: all routing passes through the calling agent. | Task orchestration, structured workflows        |
 | [**Handoffs**](#handoffs)         | The current agent decides to **transfer control** to another agent. The active agent changes, and the user may continue interacting directly with the new agent. | **Decentralized**: agents can change who is active.            | Multi-domain conversations, specialist takeover |
+| [**Skills**](#skills)             | Specialized prompts are invoked on-demand. The agent loads information progressively rather than upfront.                                                       | **On-demand**: skills are loaded as needed.                    | Progressive disclosure, team distribution       |
 
 <Tip>
-    You can mix both patterns! Use **handoffs** for agent switching and have each agent **call sub-agents as tools** for specialized tasks.
+    You can mix patterns! For example, use **handoffs** for agent switching and have each agent **call sub-agents as tools** for specialized tasks, or have a supervisor invoke **skills** at certain stages.
 </Tip>
+
+## Multi-agent context engineering
+
+At the center of multi-agent design is **[context engineering](/oss/langchain/context-engineering)** - deciding what information each agent sees. LangGraph gives you fine-grained control over:
+
+* Which parts of the conversation or state are passed to each agent.
+* Specialized prompts tailored to sub-agents.
+* Inclusion/exclusion of intermediate reasoning.
+* Customizing input/output formats per agent.
+
+The quality of your system depends on context engineering. The goal is to ensure that each agent has access to the correct data it needs to perform its task, whether it's acting as a tool or as an active agent.
 
 ### Tool calling
 
@@ -442,13 +454,73 @@ When implementing handoffs:
 7. **Use checkpointers**: Always include a @[`InMemorySaver`] [checkpointer](/oss/langchain/short-term-memory#usage) to persist state across turns.
 
 
-## Customize agent context
+### Skills
 
-At the center of multi-agent design is **[context engineering](/oss/langchain/context-engineering)** - deciding what information each agent sees. LangChain gives you fine-grained control over:
+In the **skills** architecture, specialized capabilities are packaged as invokable "skills" that augment an agent's behavior. Skills use **progressive disclosure** — a context management technique where the agent loads information on-demand rather than upfront.
 
-* Which parts of the conversation or state are passed to each agent.
-* Specialized prompts tailored to sub-agents.
-* Inclusion/exclusion of intermediate reasoning.
-* Customizing input/output formats per agent.
+```mermaid
+graph LR
+    A[User] --> B[Main Agent]
+    B --> C[Python skill]
+    B --> D[SQL skill]
+    B --> E[Docs skill]
+    C --> B
+    D --> B
+    E --> B
+    B --> A
+```
 
-The quality of your system depends on context engineering. The goal is to ensure that each agent has access to the correct data it needs to perform its task, whether it's acting as a tool or as an active agent.
+**Key characteristics:**
+
+* **Prompt-driven specialization**: Skills are primarily defined by specialized prompts and instructions
+* **Progressive disclosure**: Skills are loaded only when needed, reducing context usage
+* **Team distribution**: Different teams can develop and maintain skills independently
+* **Lightweight composition**: Skills are simpler than full sub-agents
+
+#### When to use
+
+Use the skills pattern when:
+
+* You want a **single agent with many possible specializations**
+* You need to **manage large amounts of domain knowledge** (e.g., database schemas, API docs)
+* Different **teams need to develop capabilities independently**
+* You want **progressive disclosure** — reveal capabilities as context demands
+
+Below are some examples:
+
+- **SQL assistant**: Skills for different business verticals (sales analytics, inventory management) with domain-specific schemas
+- **Coding assistant**: Skills for different languages, frameworks, or tasks (debugging, refactoring, testing)
+- **Knowledge base**: Skills for different domains (legal, medical, technical)
+
+<Card
+    title="Tutorial: Build an agent with on-demand skill loading"
+    icon="wand-magic-sparkles"
+    href="/oss/langchain/progressive-disclosure-skills"
+    arrow cta="Learn more"
+>
+    Learn how to implement skills with progressive disclosure, where the agent loads specialized prompts and schemas on-demand rather than upfront.
+</Card>
+
+#### How it works
+
+Skills work through **progressive disclosure**:
+
+1. **Lightweight descriptions**: The agent's system prompt contains brief descriptions of available skills
+2. **On-demand loading**: When the agent identifies a relevant skill, it calls a tool to load the full skill content
+3. **Context injection**: The skill's detailed prompts, schemas, or instructions are injected into the conversation
+4. **Task execution**: The agent uses the loaded skill to complete the task
+
+This approach differs from supervisors (where sub-agents run independently) and handoffs (where control transfers). With skills, the main agent stays in control and simply gains additional context.
+
+#### Trade-offs
+
+**Benefits:**
+- **Reduces context usage**: Load only the 2-3 skills needed for a task, not all available skills
+- **Enables team autonomy**: Different teams can develop specialized skills independently
+- **Scales efficiently**: Add dozens or hundreds of skills without overwhelming context
+- **Simplifies conversation history**: Single agent with one conversation thread
+
+**Limitations:**
+- **Latency**: Loading skills on-demand requires additional tool calls
+- **Workflow control**: Basic implementations rely on prompting to guide skill usage — you cannot enforce hard constraints without custom logic
+

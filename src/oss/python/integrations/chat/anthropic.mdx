@@ -466,6 +466,52 @@ for chunk in model_with_tools.stream("Write a document about AI"):
 Complete args: {'title': 'Artificial Intelligence: An Overview', 'content': '# Artificial Intelligence: An Overview...
 ```
 
+### Programmatic tool calling
+
+Tools can be configured to be callable from Claude's [code execution](#code-execution) environment, reducing latency and token consumption in contexts involving large data processing or multi-tool workflows.
+
+Refer to Claude's [programmatic tool calling guide](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling) for details. To use this feature:
+- Include the `"advanced-tool-use-2025-11-20"` beta header in your requests
+- Include the [code execution](#code-execution) built-in tool in your set of tools
+- Specify `extras={"allowed_callers": ["code_execution_20250825"]}` on tools you wish to call programmatically
+
+See below for a full example with [`create_agent`](/oss/langchain/agents).
+
+<Tip>
+    You can specify `reuse_last_container` on initialization to automatically reuse code execution containers from previous model responses.
+</Tip>
+```python
+from langchain.agents import create_agent
+from langchain.tools import tool
+from langchain_anthropic import ChatAnthropic
+
+
+@tool(extras={"allowed_callers": ["code_execution_20250825"]}) # [!code highlight]
+def get_weather(location: str) -> str:
+    """Get the weather at a location."""
+    return "It's sunny."
+
+tools = [
+    {"type": "code_execution_20250825", "name": "code_execution"}, # [!code highlight]
+    get_weather,
+]
+
+model = ChatAnthropic(
+    model="claude-sonnet-4-5",
+    betas=["advanced-tool-use-2025-11-20"], # [!code highlight]
+    reuse_last_container=True,  # [!code highlight]
+)
+
+agent = create_agent(model, tools=tools)
+
+input_query = {
+    "role": "user",
+    "content": "What's the weather in Boston?",
+}
+
+result = agent.invoke({"messages": [input_query]})
+```
+
 ## Multimodal
 
 Claude supports image and PDF inputs as content blocks, both in Anthropic's native format (see docs for [vision](https://platform.claude.com/docs/en/build-with-claude/vision) and [PDF support](https://platform.claude.com/docs/en/build-with-claude/pdf-support)) as well as LangChain's [standard format](/oss/langchain/messages#multimodal).
@@ -1467,6 +1513,9 @@ from langchain_anthropic import ChatAnthropic
 
 model = ChatAnthropic(
     model="claude-sonnet-4-5-20250929",
+    # (Optional) Enable the param below to automatically
+    # pass back in container IDs from previous response
+    reuse_last_container=True,
 )
 
 tool = {"type": "code_execution_20250825", "name": "code_execution"} # [!code highlight]

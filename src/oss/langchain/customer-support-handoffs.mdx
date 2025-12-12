@@ -3,6 +3,9 @@ title: Build a customer support agent with handoffs
 sidebarTitle: Customer support handoffs
 ---
 
+import ChatModelTabsPy from '/snippets/chat-model-tabs.mdx';
+import ChatModelTabsJs from '/snippets/chat-model-tabs-js.mdx';
+
 The [handoffs pattern](/oss/langchain/multi-agent#handoffs) describes workflows where an agent's behavior changes as it moves through different steps of a task. This tutorial shows how to implement handoffs by using tool calls to dynamically change a single agent's configuration—updating its available tools and instructions at each step based on what happened earlier in the conversation.
 
 In this tutorial, you'll build a customer support agent that does the following:
@@ -57,44 +60,81 @@ flowchart TD
 
 ## Setup
 
-1. Install the `langchain` package:
+### Installation
 
-    <CodeGroup>
-    ```bash pip
-    pip install langchain
-    ```
-    ```bash conda
-    conda install langchain -c conda-forge
-    ```
-    </CodeGroup>
+This tutorial requires the `langchain` package:
 
-    For more details, see our [Installation guide](/oss/langchain/install).
+:::python
+<CodeGroup>
+```bash pip
+pip install langchain
+```
+```bash conda
+conda install langchain -c conda-forge
+```
+</CodeGroup>
+:::
 
-2. Set up [LangSmith](https://smith.langchain.com) to inspect what is happening inside your agent:
+:::js
+<CodeGroup>
+```bash npm
+npm install langchain
+```
+```bash yarn
+yarn add langchain
+```
+```bash pnpm
+pnpm add langchain
+```
+</CodeGroup>
+:::
 
-    <CodeGroup>
-    ```bash bash
-    export LANGSMITH_TRACING="true"
-    export LANGSMITH_API_KEY="..."
-    ```
-    ```python python
-    import getpass
-    import os
+For more details, see our [Installation guide](/oss/langchain/install).
 
-    os.environ["LANGSMITH_TRACING"] = "true"
-    os.environ["LANGSMITH_API_KEY"] = getpass.getpass()
-    ```
-    </CodeGroup>
+### LangSmith
 
-3. Select a chat model. For this tutorial, we'll use Claude 3.5 Sonnet:
+Set up [LangSmith](https://smith.langchain.com) to inspect what is happening inside your agent. Then set the following environment variables:
 
-    <CodeGroup>
-    ```python python
-    from langchain.chat_models import init_chat_model
+:::python
+<CodeGroup>
+```bash bash
+export LANGSMITH_TRACING="true"
+export LANGSMITH_API_KEY="..."
+```
+```python python
+import getpass
+import os
 
-    model = init_chat_model("anthropic:claude-3-5-sonnet-latest")
-    ```
-    </CodeGroup>
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_API_KEY"] = getpass.getpass()
+```
+</CodeGroup>
+:::
+
+:::js
+<CodeGroup>
+```bash bash
+export LANGSMITH_TRACING="true"
+export LANGSMITH_API_KEY="..."
+```
+```typescript typescript
+process.env.LANGSMITH_TRACING = "true";
+process.env.LANGSMITH_API_KEY = "...";
+```
+</CodeGroup>
+:::
+
+### Components
+
+We will need to select a chat model from LangChain's suite of integrations:
+
+:::python
+<ChatModelTabsPy />
+:::
+
+:::js
+<ChatModelTabsJs />
+:::
 
 ## 1. Define custom state
 
@@ -106,11 +146,11 @@ from typing_extensions import NotRequired
 from typing import Literal
 
 # Define the possible workflow steps
-SupportStep = Literal["warranty_collector", "issue_classifier", "resolution_specialist"]
+SupportStep = Literal["warranty_collector", "issue_classifier", "resolution_specialist"]  # [!code highlight]
 
-class SupportState(AgentState):
+class SupportState(AgentState):  # [!code highlight]
     """State for customer support workflow with handoffs."""
-    current_step: NotRequired[SupportStep]
+    current_step: NotRequired[SupportStep]  # [!code highlight]
     warranty_status: NotRequired[Literal["in_warranty", "out_of_warranty"]]
     issue_type: NotRequired[Literal["hardware", "software"]]
 ```
@@ -132,10 +172,10 @@ from langgraph.types import Command
 def record_warranty_status(
     status: Literal["in_warranty", "out_of_warranty"],
     runtime: ToolRuntime[None, SupportState],
-) -> Command:
+) -> Command:  # [!code highlight]
     """Record the customer's warranty status and transition to issue classification."""
-    return Command(
-        update={
+    return Command(  # [!code highlight]
+        update={  # [!code highlight]
             "messages": [
                 ToolMessage(
                     content=f"Warranty status recorded as: {status}",
@@ -143,7 +183,7 @@ def record_warranty_status(
                 )
             ],
             "warranty_status": status,
-            "current_step": "issue_classifier",  # Transition to next step
+            "current_step": "issue_classifier",  # [!code highlight]
         }
     )
 
@@ -152,10 +192,10 @@ def record_warranty_status(
 def record_issue_type(
     issue_type: Literal["hardware", "software"],
     runtime: ToolRuntime[None, SupportState],
-) -> Command:
+) -> Command:  # [!code highlight]
     """Record the type of issue and transition to resolution specialist."""
-    return Command(
-        update={
+    return Command(  # [!code highlight]
+        update={  # [!code highlight]
             "messages": [
                 ToolMessage(
                     content=f"Issue type recorded as: {issue_type}",
@@ -163,7 +203,7 @@ def record_issue_type(
                 )
             ],
             "issue_type": issue_type,
-            "current_step": "resolution_specialist",  # Transition to next step
+            "current_step": "resolution_specialist",  # [!code highlight]
         }
     )
 
@@ -185,7 +225,9 @@ Notice how `record_warranty_status` and `record_issue_type` return `Command` obj
 
 ## 3. Define step configurations
 
-Now define prompts and tools for each step. We'll use a simple dictionary to map step names to their configurations:
+Define prompts and tools for each step. First, define the prompts for each step:
+
+<Accordion title="View complete prompt definitions">
 
 ```python
 # Define prompts as constants for easy reference
@@ -224,9 +266,14 @@ At this step, you need to:
    - If OUT OF WARRANTY: escalate_to_human for paid repair options
 
 Be specific and helpful in your solutions."""
+```
 
+</Accordion>
 
-# Stage configuration: maps step name to (prompt_template, tools, required_state)
+Then map step names to their configurations using a dictionary:
+
+```python
+# Step configuration: maps step name to (prompt, tools, required_state)
 STEP_CONFIG = {
     "warranty_collector": {
         "prompt": WARRANTY_COLLECTOR_PROMPT,
@@ -261,17 +308,17 @@ from langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResp
 from typing import Callable
 
 
-@wrap_model_call
-async def apply_step_config(
+@wrap_model_call  # [!code highlight]
+def apply_step_config(
     request: ModelRequest,
     handler: Callable[[ModelRequest], ModelResponse],
 ) -> ModelResponse:
     """Configure agent behavior based on the current step."""
     # Get current step (defaults to warranty_collector for first interaction)
-    current_step = request.state.get("current_step", "warranty_collector")
+    current_step = request.state.get("current_step", "warranty_collector")  # [!code highlight]
 
     # Look up step configuration
-    stage_config = STEP_CONFIG[current_step]
+    stage_config = STEP_CONFIG[current_step]  # [!code highlight]
 
     # Validate required state exists
     for key in stage_config["requires"]:
@@ -282,12 +329,12 @@ async def apply_step_config(
     system_prompt = stage_config["prompt"].format(**request.state)
 
     # Inject system prompt and step-specific tools
-    request = request.override(
-        system_prompt=system_prompt,
-        tools=stage_config["tools"],
+    request = request.override(  # [!code highlight]
+        system_prompt=system_prompt,  # [!code highlight]
+        tools=stage_config["tools"],  # [!code highlight]
     )
 
-    return await handler(request)
+    return handler(request)
 ```
 
 This middleware:
@@ -320,9 +367,9 @@ all_tools = [
 agent = create_agent(
     model,
     tools=all_tools,
-    state_schema=SupportState,
-    middleware=[apply_step_config],  # Single middleware handles all steps
-    checkpointer=InMemorySaver(),  # Required for state persistence across turns
+    state_schema=SupportState,  # [!code highlight]
+    middleware=[apply_step_config],  # [!code highlight]
+    checkpointer=InMemorySaver(),  # [!code highlight]
 )
 ```
 
@@ -426,135 +473,76 @@ The key insight: **Tools drive the workflow** by updating `current_step`, and **
 
 ## 8. Manage message history
 
-As the agent progresses through different steps, the message history grows to include conversations from all previous steps. Without proper management, this can lead to:
-- Exceeding the LLM's context window
-- Slower responses and higher costs
-- Agents getting confused by irrelevant messages from earlier steps
+As the agent progresses through steps, message history grows to include conversations from all previous steps. Without management, this causes context window issues, higher costs, and agent confusion.
 
 ### Recommended: Use summarization
 
-The best approach for most handoff workflows is to use [summarization](/oss/langchain/short-term-memory#summarize-messages) to compress earlier messages while preserving conversational context. This ensures later steps can reference specific details from earlier conversations without hitting context limits.
-
-See the [short-term memory management guide](/oss/langchain/short-term-memory) for built-in summarization middleware and other techniques.
-
-### Simpler alternative: Store facts in state
-
-For simpler workflows where you don't need full conversational context, you can clear most message history after each transition and store only the essential facts in state. This works well when:
-- Each step needs limited context from previous steps
-- The workflow collects structured information (like forms or debugging flows)
-- You want to minimize costs and latency
-
-The key is to **separate what the agent sees (messages) from what it knows (state)**:
-
-- **Message history**: Recent conversation turns for the current step
-- **State**: Structured facts that carry across steps
-- **System prompt**: Inject state as context so the agent knows what was learned previously
-
-#### Extend state to store facts
-
-For this support workflow, extend the state to track both task information and optional user facts:
+Use [summarization middleware](/oss/langchain/short-term-memory#summarize-messages) to compress earlier messages while preserving conversational context:
 
 ```python
-class SupportState(AgentState):
-    """State for customer support workflow."""
-    current_step: NotRequired[SupportStep]
-    warranty_status: NotRequired[Literal["in_warranty", "out_of_warranty"]]
-    issue_type: NotRequired[Literal["hardware", "software"]]
-    # Optional: store user facts that persist across steps
-    customer_name: NotRequired[str]
+from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware  # [!code highlight]
+from langgraph.checkpoint.memory import InMemorySaver
+
+agent = create_agent(
+    model,
+    tools=all_tools,
+    state_schema=SupportState,
+    middleware=[
+        apply_step_config,
+        SummarizationMiddleware(  # [!code highlight]
+            model="gpt-4o-mini",  # Use faster model for summarization
+            trigger=("tokens", 4000),  # Trigger when messages exceed 4000 tokens
+            keep=("messages", 10)  # Keep last 10 messages unsummarized
+        )
+    ],
+    checkpointer=InMemorySaver(),
+)
 ```
 
-Create tools that let the agent record user facts:
+This ensures later steps can reference details from earlier conversations without hitting context limits. See the [short-term memory guide](/oss/langchain/short-term-memory) for more options.
+
+### Alternative: Clear messages during transitions
+
+For simpler workflows that collect structured information (like this support flow), you can clear messages during transitions and rely entirely on state. Tools update state with facts, and each step only sees recent messages:
 
 ```python
 @tool
-def record_customer_info(
-    name: str,
-    runtime: ToolRuntime[None, SupportState]
+def record_warranty_status(
+    status: Literal["in_warranty", "out_of_warranty"],
+    runtime: ToolRuntime[None, SupportState],
 ) -> Command:
-    """Record customer name to personalize the conversation."""
+    """Record warranty status and transition to next step."""
     return Command(
         update={
             "messages": [
+                RemoveMessage(id=REMOVE_ALL_MESSAGES),  # [!code highlight]
                 ToolMessage(
-                    content=f"Recorded customer name: {name}",
+                    content=f"Warranty status recorded as: {status}",
                     tool_call_id=runtime.tool_call_id,
                 )
             ],
-            "customer_name": name,
+            "warranty_status": status,
+            "current_step": "issue_classifier",
         }
     )
 ```
 
-#### Clear messages after transitions
-
-Use `@before_model` middleware to keep only recent messages:
+Then inject state into system prompts so each step knows what was learned:
 
 ```python
-from langchain.agents.middleware import before_model
-from langchain.messages import RemoveMessage
-from langgraph.graph.message import REMOVE_ALL_MESSAGES
+# In your middleware, add context from state:
+context_summary = ""
+if request.state.get("warranty_status"):
+    context_summary += f"\nWarranty: {request.state['warranty_status']}"
+if request.state.get("issue_type"):
+    context_summary += f", Issue: {request.state['issue_type']}"
 
-@before_model
-def scope_messages_to_agent(state: SupportState, runtime: Runtime) -> dict | None:
-    """Keep only recent messages for the current step."""
-    messages = state["messages"]
-
-    # Keep only last 4-5 messages (2-3 conversation turns)
-    if len(messages) <= 5:
-        return None
-
-    # Keep first message and recent messages
-    first_msg = messages[0]
-    recent_messages = messages[-4:]
-    new_messages = [first_msg] + recent_messages
-
-    return {
-        "messages": [
-            RemoveMessage(id=REMOVE_ALL_MESSAGES),
-            *new_messages
-        ]
-    }
+system_prompt = step_config["prompt"].format(**request.state)
+system_prompt += context_summary
 ```
 
-#### Inject state into system prompts
-
-Since messages are trimmed, inject the structured state into the system prompt:
-
-```python
-@wrap_model_call
-async def apply_step_config(
-    request: ModelRequest,
-    handler: Callable[[ModelRequest], ModelResponse],
-) -> ModelResponse:
-    """Configure agent behavior based on the current step."""
-    current_step = request.state.get("current_step", "warranty_collector")
-    stage_config = STEP_CONFIG[current_step]
-
-    # Build context summary from state
-    context_parts = []
-    if request.state.get("warranty_status"):
-        context_parts.append(f"Warranty: {request.state['warranty_status']}")
-    if request.state.get("issue_type"):
-        context_parts.append(f"Issue: {request.state['issue_type']}")
-    if request.state.get("customer_name"):
-        context_parts.append(f"Customer: {request.state['customer_name']}")
-
-    context_summary = ""
-    if context_parts:
-        context_summary = "\n\nContext from previous steps: " + ", ".join(context_parts)
-
-    # Format prompt and inject context
-    system_prompt = stage_config["prompt"].format(**request.state)
-    system_prompt += context_summary
-
-    request = request.override(
-        system_prompt=system_prompt,
-        tools=stage_config["tools"],
-    )
-
-    return await handler(request)
-```
+This minimizes context usage and costs, but loses conversational details between steps.
 
 ## 9. Add flexibility: Go back
 
@@ -562,15 +550,15 @@ A key UX requirement is allowing users to correct mistakes. Add "go back" tools:
 
 ```python
 @tool
-def go_back_to_warranty(runtime: ToolRuntime[None, SupportState]) -> Command:
+def go_back_to_warranty(runtime: ToolRuntime[None, SupportState]) -> Command:  # [!code highlight]
     """Go back to warranty verification step."""
-    return Command(update={"current_step": "warranty_collector"})
+    return Command(update={"current_step": "warranty_collector"})  # [!code highlight]
 
 
 @tool
-def go_back_to_classification(runtime: ToolRuntime[None, SupportState]) -> Command:
+def go_back_to_classification(runtime: ToolRuntime[None, SupportState]) -> Command:  # [!code highlight]
     """Go back to issue classification step."""
-    return Command(update={"current_step": "issue_classifier"})
+    return Command(update={"current_step": "issue_classifier"})  # [!code highlight]
 
 
 # Update the resolution_specialist configuration to include these tools
@@ -789,7 +777,7 @@ def scope_messages_to_agent(state: SupportState, runtime: Runtime) -> dict | Non
 
 
 @wrap_model_call
-async def apply_step_config(
+def apply_step_config(
     request: ModelRequest,
     handler: Callable[[ModelRequest], ModelResponse],
 ) -> ModelResponse:
@@ -823,7 +811,7 @@ async def apply_step_config(
         tools=stage_config["tools"],
     )
 
-    return await handler(request)
+    return handler(request)
 
 
 # Collect all tools from all agent configurations

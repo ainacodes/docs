@@ -1,0 +1,690 @@
+---
+title: Trace Claude Code
+sidebarTitle: Claude Code
+---
+
+This guide shows you how to automatically send conversations from the [Claude Code CLI](https://code.claude.com/docs/en/overview) to LangSmith.
+
+Once configured, you can opt-in to sending traces from Claude Code projects to LangSmith. Traces will include user messages, tool calls and assistant responses.
+
+<div style={{ textAlign: 'center' }}>
+<img
+    className="block dark:hidden"
+    src="/langsmith/images/claude-code-trace.png"
+    alt="LangSmith UI showing trace from Claude Code."
+/>
+
+<img
+    className="hidden dark:block"
+    src="/langsmith/images/claude-code-trace-dark.png"
+    alt="LangSmith UI showing trace from Claude Code."
+/>
+</div>
+
+
+## How it works
+
+1. A global "Stop" [hook](https://code.claude.com/docs/en/hooks-guide#get-started-with-claude-code-hooks) is configured to run each time Claude Code responds.
+2. The hook reads Claude Code’s generated conversation transcripts.
+3. Messages in the transcript are converted into LangSmith runs and sent to your LangSmith project.
+
+<Note> Tracing is opt-in and is enabled per Claude Code project using environment variables. </Note>
+
+## Prerequisites
+
+Before setting up tracing, ensure you have:
+
+- **Claude Code CLI** installed.
+- **LangSmith API key** ([get it here](https://smith.langchain.com/settings/apikeys)).
+- **Command-line tool** `jq` - JSON processor ([install guide](https://jqlang.github.io/jq/download/))
+
+<Info>
+This guide currently supports macOS and Linux only.
+</Info>
+
+
+## 1. Create the hook script
+
+`stop_hook.sh` processes Claude Code's generated conversation transcripts and sends traces to LangSmith. Create the file `~/.claude/hooks/stop_hook.sh` with the following script:
+
+<Accordion title="`stop_hook.sh` file">
+```bash
+#!/bin/bash
+###
+# Claude Code Stop Hook - LangSmith Tracing Integration
+# Sends Claude Code traces to LangSmith after each response.
+###
+
+set -e
+
+# Exit early if tracing disabled
+if [ "${TRACE_TO_LANGSMITH,,}" != "true" ]; then
+    exit 0
+fi
+
+# Required commands
+for cmd in jq curl uuidgen; do
+    if ! command -v $cmd &> /dev/null; then
+        echo "Error: $cmd is required but not installed" >&2
+        exit 0
+    fi
+done
+
+# Config
+API_KEY="${CC_LANGSMITH_API_KEY:-$LANGSMITH_API_KEY}"
+PROJECT="${CC_LANGSMITH_PROJECT:-claude-code}"
+API_BASE="https://api.smith.langchain.com"
+STATE_FILE="$HOME/.claude/state/langsmith_state.json"
+LOG_FILE="$HOME/.claude/state/hook.log"
+DEBUG="${CC_LANGSMITH_DEBUG,,}"
+
+# Ensure state directory exists
+mkdir -p "$(dirname "$STATE_FILE")"
+
+# Validate API key
+if [ -z "$API_KEY" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] CC_LANGSMITH_API_KEY not set" >> "$LOG_FILE"
+    exit 0
+fi
+
+# Logging function
+log() {
+    local level="$1"
+    shift
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [$level] $*" >> "$LOG_FILE"
+}
+
+# Debug logging
+debug() {
+    if [ "$DEBUG" = "true" ]; then
+        log "DEBUG" "$@"
+    fi
+}
+
+# API call helper
+api_call() {
+    local method="$1"
+    local endpoint="$2"
+    local data="$3"
+
+    debug "API call: $method $endpoint"
+
+    local response
+    local http_code
+    response=$(curl -s -w "\n%{http_code}" -X "$method" \
+        -H "x-api-key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$data" \
+        "$API_BASE$endpoint" 2>&1)
+
+    http_code=$(echo "$response" | tail -n1)
+    response=$(echo "$response" | head -n-1)
+
+    debug "HTTP $http_code: ${response:0:200}"
+
+    if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+        log "ERROR" "API call failed: $method $endpoint"
+        log "ERROR" "HTTP $http_code: $response"
+        log "ERROR" "Request data: ${data:0:500}"
+        return 1
+    fi
+
+    echo "$response"
+}
+
+# Load state
+load_state() {
+    if [ ! -f "$STATE_FILE" ]; then
+        echo "{}"
+        return
+    fi
+    cat "$STATE_FILE"
+}
+
+# Save state
+save_state() {
+    local state="$1"
+    echo "$state" > "$STATE_FILE"
+}
+
+# Get message content
+get_content() {
+    local msg="$1"
+    echo "$msg" | jq -c 'if has("message") then .message.content else .content end'
+}
+
+# Check if message is tool result
+is_tool_result() {
+    local msg="$1"
+    local content
+    content=$(get_content "$msg")
+
+    echo "$content" | jq -e 'if type == "array" then any(.[]; type == "object" and .type == "tool_result") else false end' > /dev/null 2>&1
+}
+
+# Format content blocks for LangSmith
+format_content() {
+    local msg="$1"
+    local content
+    content=$(get_content "$msg")
+
+    # Handle string content
+    if echo "$content" | jq -e 'type == "string"' > /dev/null 2>&1; then
+        echo "$content" | jq '[{"type": "text", "text": .}]'
+        return
+    fi
+
+    # Handle array content
+    if echo "$content" | jq -e 'type == "array"' > /dev/null 2>&1; then
+        echo "$content" | jq '[
+            .[] |
+            if type == "object" then
+                if .type == "text" then
+                    {"type": "text", "text": .text}
+                elif .type == "tool_use" then
+                    {"type": "tool_call", "name": .name, "args": .input, "id": .id}
+                else
+                    .
+                end
+            elif type == "string" then
+                {"type": "text", "text": .}
+            else
+                .
+            end
+        ] | if length == 0 then [{"type": "text", "text": ""}] else . end'
+        return
+    fi
+
+    # Default
+    echo '[{"type": "text", "text": ""}]'
+}
+
+# Get tool uses from message
+get_tool_uses() {
+    local msg="$1"
+    local content
+    content=$(get_content "$msg")
+
+    # Check if content is an array
+    if ! echo "$content" | jq -e 'type == "array"' > /dev/null 2>&1; then
+        echo "[]"
+        return
+    fi
+
+    echo "$content" | jq -c '[.[] | select(type == "object" and .type == "tool_use")]'
+}
+
+# Find tool result
+find_tool_result() {
+    local tool_id="$1"
+    local tool_results="$2"
+
+    local result
+    result=$(echo "$tool_results" | jq -r --arg id "$tool_id" '
+        .[] |
+        (if has("message") then .message.content else .content end) as $content |
+        if $content | type == "array" then
+            $content[] |
+            select(type == "object" and .type == "tool_result" and .tool_use_id == $id) |
+            if .content | type == "array" then
+                [.content[] | select(type == "object" and .type == "text") | .text] | join(" ")
+            elif .content | type == "string" then
+                .content
+            else
+                .content | tostring
+            end
+        else
+            empty
+        end
+    ' | head -1)
+
+    if [ -z "$result" ]; then
+        echo "No result"
+    else
+        echo "$result"
+    fi
+}
+
+# Create LangSmith trace
+create_trace() {
+    local session_id="$1"
+    local turn_num="$2"
+    local user_msg="$3"
+    local assistant_msg="$4"
+    local tool_results="$5"
+
+    local turn_id
+    turn_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+    local user_content
+    user_content=$(format_content "$user_msg")
+
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # Create top-level turn run
+    local turn_data
+    turn_data=$(jq -n \
+        --arg id "$turn_id" \
+        --arg name "Claude Code" \
+        --arg project "$PROJECT" \
+        --arg session "$session_id" \
+        --arg time "$now" \
+        --argjson content "$user_content" \
+        --arg turn "$turn_num" \
+        '{
+            id: $id,
+            name: $name,
+            run_type: "chain",
+            inputs: {messages: [{role: "user", content: $content}]},
+            start_time: $time,
+            session_name: $project,
+            extra: {metadata: {thread_id: $session}},
+            tags: ["claude-code", ("turn-" + $turn)]
+        }')
+
+    debug "Creating turn run: $turn_id"
+    api_call "POST" "/runs" "$turn_data" > /dev/null
+
+    # Create assistant run
+    local assistant_id
+    assistant_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+    local tool_uses
+    tool_uses=$(get_tool_uses "$assistant_msg")
+
+    local assistant_content
+    assistant_content=$(format_content "$assistant_msg")
+
+    local has_tools="text"
+    if [ "$(echo "$tool_uses" | jq 'length')" -gt 0 ]; then
+        has_tools="with tools"
+    fi
+
+    local assistant_data
+    assistant_data=$(jq -n \
+        --arg id "$assistant_id" \
+        --arg parent "$turn_id" \
+        --arg name "Claude ($has_tools)" \
+        --arg project "$PROJECT" \
+        --arg time "$now" \
+        --argjson inputs "$(echo "$turn_data" | jq '.inputs')" \
+        '{
+            id: $id,
+            parent_run_id: $parent,
+            name: $name,
+            run_type: "llm",
+            inputs: $inputs,
+            start_time: $time,
+            session_name: $project,
+            extra: {metadata: {ls_provider: "anthropic", ls_model_name: "claude-sonnet-4-5"}},
+            tags: ["claude-sonnet-4-5"]
+        }')
+
+    debug "Creating assistant run: $assistant_id"
+    api_call "POST" "/runs" "$assistant_data" > /dev/null
+
+    # Build outputs array
+    local outputs
+    outputs=$(jq -n --argjson content "$assistant_content" '[{role: "assistant", content: $content}]')
+
+    # Create tool runs
+    if [ "$(echo "$tool_uses" | jq 'length')" -gt 0 ]; then
+        while IFS= read -r tool; do
+            local tool_id
+            tool_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+            local tool_name
+            tool_name=$(echo "$tool" | jq -r '.name // "tool"')
+
+            local tool_input
+            tool_input=$(echo "$tool" | jq '.input // {}')
+
+            local tool_use_id
+            tool_use_id=$(echo "$tool" | jq -r '.id // ""')
+
+            local tool_data
+            tool_data=$(jq -n \
+                --arg id "$tool_id" \
+                --arg parent "$assistant_id" \
+                --arg name "$tool_name" \
+                --arg project "$PROJECT" \
+                --arg time "$now" \
+                --argjson input "$tool_input" \
+                '{
+                    id: $id,
+                    parent_run_id: $parent,
+                    name: $name,
+                    run_type: "tool",
+                    inputs: {input: $input},
+                    start_time: $time,
+                    session_name: $project,
+                    tags: ["tool"]
+                }')
+
+            debug "Creating tool run: $tool_name ($tool_id)"
+            api_call "POST" "/runs" "$tool_data" > /dev/null
+
+            # Find and add tool result
+            local result
+            result=$(find_tool_result "$tool_use_id" "$tool_results")
+
+            local tool_end
+            tool_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            local tool_update
+            tool_update=$(jq -n \
+                --arg time "$tool_end" \
+                --arg result "$result" \
+                '{
+                    outputs: {output: $result},
+                    end_time: $time
+                }')
+
+            api_call "PATCH" "/runs/$tool_id" "$tool_update" > /dev/null
+
+            # Add to outputs
+            outputs=$(echo "$outputs" | jq \
+                --arg id "$tool_use_id" \
+                --arg result "$result" \
+                '. += [{role: "tool", tool_call_id: $id, content: [{type: "text", text: $result}]}]')
+
+        done < <(echo "$tool_uses" | jq -c '.[]')
+    fi
+
+    # Update assistant run
+    local assistant_end
+    assistant_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local assistant_update
+    assistant_update=$(jq -n \
+        --arg time "$assistant_end" \
+        --argjson outputs "$outputs" \
+        '{
+            outputs: {messages: $outputs},
+            end_time: $time
+        }')
+
+    api_call "PATCH" "/runs/$assistant_id" "$assistant_update" > /dev/null
+
+    # Update turn run
+    local turn_end
+    turn_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local turn_update
+    turn_update=$(jq -n \
+        --arg time "$turn_end" \
+        --argjson outputs "$outputs" \
+        '{
+            outputs: {messages: $outputs},
+            end_time: $time
+        }')
+
+    api_call "PATCH" "/runs/$turn_id" "$turn_update" > /dev/null
+
+    log "INFO" "Created turn $turn_num: $turn_id"
+}
+
+# Main function
+main() {
+    # Read hook input
+    local hook_input
+    hook_input=$(cat)
+
+    debug "Hook input: $hook_input"
+
+    # Check stop_hook_active flag
+    if echo "$hook_input" | jq -e '.stop_hook_active == true' > /dev/null 2>&1; then
+        debug "stop_hook_active=true, skipping"
+        exit 0
+    fi
+
+    # Extract session info
+    local session_id
+    session_id=$(echo "$hook_input" | jq -r '.session_id // ""')
+
+    local transcript_path
+    transcript_path=$(echo "$hook_input" | jq -r '.transcript_path // ""' | sed "s|^~|$HOME|")
+
+    if [ -z "$session_id" ] || [ ! -f "$transcript_path" ]; then
+        log "WARN" "Invalid input: session=$session_id, transcript=$transcript_path"
+        exit 0
+    fi
+
+    log "INFO" "Processing session $session_id"
+
+    # Load state
+    local state
+    state=$(load_state)
+
+    local last_line
+    last_line=$(echo "$state" | jq -r --arg sid "$session_id" '.[$sid].last_line // -1')
+
+    local turn_count
+    turn_count=$(echo "$state" | jq -r --arg sid "$session_id" '.[$sid].turn_count // 0')
+
+    # Parse new messages
+    local new_messages
+    new_messages=$(awk -v start="$last_line" 'NR > start + 1 && NF' "$transcript_path")
+
+    if [ -z "$new_messages" ]; then
+        debug "No new messages"
+        exit 0
+    fi
+
+    local msg_count
+    msg_count=$(echo "$new_messages" | wc -l)
+    log "INFO" "Found $msg_count new messages"
+
+    # Group into turns
+    local current_user=""
+    local current_assistant=""
+    local current_tool_results="[]"
+    local turns=0
+    local new_last_line=$last_line
+
+    while IFS= read -r line; do
+        new_last_line=$((new_last_line + 1))
+
+        if [ -z "$line" ]; then
+            continue
+        fi
+
+        local role
+        role=$(echo "$line" | jq -r 'if has("message") then .message.role else .role end')
+
+        if [ "$role" = "user" ]; then
+            if is_tool_result "$line"; then
+                # Add to tool results
+                current_tool_results=$(echo "$current_tool_results" | jq --argjson msg "$line" '. += [$msg]')
+            else
+                # New turn
+                if [ -n "$current_user" ] && [ -n "$current_assistant" ]; then
+                    turns=$((turns + 1))
+                    local turn_num=$((turn_count + turns))
+                    create_trace "$session_id" "$turn_num" "$current_user" "$current_assistant" "$current_tool_results" || true
+                fi
+                current_user="$line"
+                current_assistant=""
+                current_tool_results="[]"
+            fi
+        elif [ "$role" = "assistant" ]; then
+            if [ -n "$current_assistant" ]; then
+                # Merge content from multiple assistant messages
+                local existing_content
+                existing_content=$(get_content "$current_assistant")
+                local new_content
+                new_content=$(get_content "$line")
+
+                # Convert to arrays if needed and combine
+                local merged_content
+                merged_content=$(jq -n \
+                    --argjson a "$existing_content" \
+                    --argjson b "$new_content" \
+                    '(if ($a | type) == "string" then [{"type":"text","text":$a}] else $a end) +
+                     (if ($b | type) == "string" then [{"type":"text","text":$b}] else $b end)')
+
+                # Update current_assistant with merged content
+                current_assistant=$(echo "$line" | jq --argjson content "$merged_content" '.message.content = $content')
+            else
+                current_assistant="$line"
+            fi
+        fi
+    done <<< "$new_messages"
+
+    # Process final turn
+    if [ -n "$current_user" ] && [ -n "$current_assistant" ]; then
+        turns=$((turns + 1))
+        local turn_num=$((turn_count + turns))
+        create_trace "$session_id" "$turn_num" "$current_user" "$current_assistant" "$current_tool_results" || true
+    fi
+
+    # Update state
+    local updated
+    updated=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    state=$(echo "$state" | jq \
+        --arg sid "$session_id" \
+        --arg line "$new_last_line" \
+        --arg count "$((turn_count + turns))" \
+        --arg time "$updated" \
+        '.[$sid] = {last_line: ($line | tonumber), turn_count: ($count | tonumber), updated: $time}')
+
+    save_state "$state"
+
+    log "INFO" "Processed $turns turns"
+}
+
+# Run main
+main 2>&1 | head -c 10000  # Limit output to prevent hanging
+
+exit 0
+```
+</Accordion>
+
+
+Make it executable:
+
+```bash
+chmod +x ~/.claude/hooks/run_stop_hook.sh
+```
+
+
+## 2. Configure the global hook
+
+Set up a global hook in `~/.claude/settings.json` that runs the `stop_hook.sh` script. The global setting enables you to easily trace any Claude Code CLI project.
+
+In `~/.claude/settings.json`, add the `Stop` hook.
+
+```json
+"hooks": {
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash ~/.claude/hooks/stop_hook.sh",
+          "timeout": 30
+        }
+      ]
+    }
+  ]
+}
+```
+
+## 3. Enable Tracing
+
+For each Claude Code project where you want tracing enabled, create or edit [Claude Code's project settings file](https://code.claude.com/docs/en/settings#:~:text=Project%20settings%20are%20saved%20in%20your%20project%20directory%3A) `.claude/settings.local.json` to include the following environment variables:
+
+- `TRACE_TO_LANGSMITH: "true"` - Enables tracing for this project. Remove or set to `false` to disable tracing.
+- `CC_LANGSMITH_API_KEY` - Your LangSmith API key
+- `CC_LANGSMITH_PROJECT` - The LangSmith project name where traces are sent
+- (optional) `CC_LANGSMITH_DEBUG: "true"` - Enables detailed debug logging. Remove or set to `false` to disable tracing.
+
+```json
+{
+  "env": {
+    "TRACE_TO_LANGSMITH": "true",
+    "CC_LANGSMITH_API_KEY": "lsv2_pt_...",
+    "CC_LANGSMITH_PROJECT": "project-name",
+    "CC_LANGSMITH_DEBUG": "true"
+
+  }
+}
+```
+
+## 4. Verify Setup
+
+Start a Claude Code session in your configured project. Traces will appear in LangSmith after Claude Code responds.
+
+In LangSmith, you'll see:
+
+- Each message to Claude Code appears as a trace.
+- All turns from the same Claude Code session are grouped using a shared `thread_id` and can be viewed in the **Threads** tab of a project.
+
+
+## Troubleshooting
+
+### No traces appearing in LangSmith
+
+1. **Check the hook is running**:
+   ```bash
+   tail -f ~/.claude/state/hook.log
+   ```
+   You should see log entries after each Claude response.
+
+2. **Verify environment variables**:
+   - Check that `TRACE_TO_LANGSMITH="true"` in your project's `.claude/settings.local.json`
+   - Verify your API key is correct (starts with `lsv2_pt_`)
+   - Ensure the project name exists in LangSmith
+
+3. **Enable debug mode** to see detailed API activity:
+   ```json
+   {
+     "env": {
+       "CC_LANGSMITH_DEBUG": "true"
+     }
+   }
+   ```
+   Then check logs for API calls and HTTP status codes.
+
+### Permission errors
+
+Make sure the hook script is executable:
+
+```bash
+chmod +x ~/.claude/hooks/stop_hook.sh
+```
+
+### Required commands not found
+
+Verify all required commands are installed:
+
+```bash
+which jq curl uuidgen
+```
+
+If `jq` is missing:
+- **macOS**: `brew install jq`
+- **Ubuntu/Debian**: `sudo apt-get install jq`
+
+### Managing log file size
+
+The hook logs all activity to `~/.claude/state/hook.log`. With debug mode enabled, this file can grow large:
+
+```bash
+# View log file size
+ls -lh ~/.claude/state/hook.log
+
+# Clear logs if needed
+> ~/.claude/state/hook.log
+```
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/langsmith/trace-claude-code.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

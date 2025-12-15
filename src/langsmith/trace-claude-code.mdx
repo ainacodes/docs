@@ -39,7 +39,7 @@ Before setting up tracing, ensure you have:
 - **Command-line tool** `jq` - JSON processor ([install guide](https://jqlang.github.io/jq/download/))
 
 <Info>
-This guide currently supports macOS and Linux only.
+This guide currently only supports macOS.
 </Info>
 
 
@@ -566,7 +566,7 @@ exit 0
 Make it executable:
 
 ```bash
-chmod +x ~/.claude/hooks/run_stop_hook.sh
+chmod +x ~/.claude/hooks/stop_hook.sh
 ```
 
 
@@ -594,7 +594,7 @@ In `~/.claude/settings.json`, add the `Stop` hook.
 
 ## 3. Enable Tracing
 
-For each Claude Code project where you want tracing enabled, create or edit [Claude Code's project settings file](https://code.claude.com/docs/en/settings#:~:text=Project%20settings%20are%20saved%20in%20your%20project%20directory%3A) `.claude/settings.local.json` to include the following environment variables:
+For each Claude Code project (a Claude Code project is a directory with Claude Code initialized) where you want tracing enabled, create or edit [Claude Code's project settings file](https://code.claude.com/docs/en/settings#:~:text=Project%20settings%20are%20saved%20in%20your%20project%20directory%3A) `.claude/settings.local.json` to include the following environment variables:
 
 - `TRACE_TO_LANGSMITH: "true"` - Enables tracing for this project. Remove or set to `false` to disable tracing.
 - `CC_LANGSMITH_API_KEY` - Your LangSmith API key

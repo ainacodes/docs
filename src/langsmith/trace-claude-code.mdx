@@ -58,7 +58,7 @@ This guide currently only supports macOS.
 set -e
 
 # Exit early if tracing disabled
-if [ "${TRACE_TO_LANGSMITH,,}" != "true" ]; then
+if [ "$(echo "$TRACE_TO_LANGSMITH" | tr '[:upper:]' '[:lower:]')" != "true" ]; then
     exit 0
 fi
 
@@ -76,7 +76,7 @@ PROJECT="${CC_LANGSMITH_PROJECT:-claude-code}"
 API_BASE="https://api.smith.langchain.com"
 STATE_FILE="$HOME/.claude/state/langsmith_state.json"
 LOG_FILE="$HOME/.claude/state/hook.log"
-DEBUG="${CC_LANGSMITH_DEBUG,,}"
+DEBUG="$(echo "$CC_LANGSMITH_DEBUG" | tr '[:upper:]' '[:lower:]')"
 
 # Ensure state directory exists
 mkdir -p "$(dirname "$STATE_FILE")"
@@ -221,22 +221,24 @@ find_tool_result() {
 
     local result
     result=$(echo "$tool_results" | jq -r --arg id "$tool_id" '
-        .[] |
-        (if has("message") then .message.content else .content end) as $content |
-        if $content | type == "array" then
-            $content[] |
-            select(type == "object" and .type == "tool_result" and .tool_use_id == $id) |
-            if .content | type == "array" then
-                [.content[] | select(type == "object" and .type == "text") | .text] | join(" ")
-            elif .content | type == "string" then
-                .content
+        first(
+            .[] |
+            (if has("message") then .message.content else .content end) as $content |
+            if $content | type == "array" then
+                $content[] |
+                select(type == "object" and .type == "tool_result" and .tool_use_id == $id) |
+                if .content | type == "array" then
+                    [.content[] | select(type == "object" and .type == "text") | .text] | join(" ")
+                elif .content | type == "string" then
+                    .content
+                else
+                    .content | tostring
+                end
             else
-                .content | tostring
+                empty
             end
-        else
-            empty
-        end
-    ' | head -1)
+        ) // ""
+    ')
 
     if [ -z "$result" ]; then
         echo "No result"
@@ -250,7 +252,7 @@ create_trace() {
     local session_id="$1"
     local turn_num="$2"
     local user_msg="$3"
-    local assistant_msg="$4"
+    local assistant_messages="$4"  # JSON array of assistant messages
     local tool_results="$5"
 
     local turn_id
@@ -286,135 +288,170 @@ create_trace() {
     debug "Creating turn run: $turn_id"
     api_call "POST" "/runs" "$turn_data" > /dev/null
 
-    # Create assistant run
-    local assistant_id
-    assistant_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+    # Build final outputs array (accumulates all LLM responses)
+    local all_outputs
+    all_outputs=$(jq -n --argjson content "$user_content" '[{role: "user", content: $content}]')
 
-    local tool_uses
-    tool_uses=$(get_tool_uses "$assistant_msg")
+    # Process each assistant message (each represents one LLM call)
+    local llm_num=0
+    local last_llm_end="$now"
+    while IFS= read -r assistant_msg; do
+        llm_num=$((llm_num + 1))
 
-    local assistant_content
-    assistant_content=$(format_content "$assistant_msg")
+        # Each LLM starts after the previous one ended
+        local llm_start
+        if [ $llm_num -eq 1 ]; then
+            llm_start="$now"
+        else
+            llm_start="$last_llm_end"
+        fi
 
-    local has_tools="text"
-    if [ "$(echo "$tool_uses" | jq 'length')" -gt 0 ]; then
-        has_tools="with tools"
-    fi
+        # Create assistant run
+        local assistant_id
+        assistant_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
-    local assistant_data
-    assistant_data=$(jq -n \
-        --arg id "$assistant_id" \
-        --arg parent "$turn_id" \
-        --arg name "Claude ($has_tools)" \
-        --arg project "$PROJECT" \
-        --arg time "$now" \
-        --argjson inputs "$(echo "$turn_data" | jq '.inputs')" \
-        '{
-            id: $id,
-            parent_run_id: $parent,
-            name: $name,
-            run_type: "llm",
-            inputs: $inputs,
-            start_time: $time,
-            session_name: $project,
-            extra: {metadata: {ls_provider: "anthropic", ls_model_name: "claude-sonnet-4-5"}},
-            tags: ["claude-sonnet-4-5"]
-        }')
+        local tool_uses
+        tool_uses=$(get_tool_uses "$assistant_msg")
 
-    debug "Creating assistant run: $assistant_id"
-    api_call "POST" "/runs" "$assistant_data" > /dev/null
+        local assistant_content
+        assistant_content=$(format_content "$assistant_msg")
 
-    # Build outputs array
-    local outputs
-    outputs=$(jq -n --argjson content "$assistant_content" '[{role: "assistant", content: $content}]')
+        # Build inputs for this LLM call (includes accumulated context)
+        local llm_inputs
+        llm_inputs=$(jq -n --argjson outputs "$all_outputs" '{messages: $outputs}')
 
-    # Create tool runs
-    if [ "$(echo "$tool_uses" | jq 'length')" -gt 0 ]; then
-        while IFS= read -r tool; do
-            local tool_id
-            tool_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+        local assistant_data
+        assistant_data=$(jq -n \
+            --arg id "$assistant_id" \
+            --arg parent "$turn_id" \
+            --arg name "Claude" \
+            --arg project "$PROJECT" \
+            --arg time "$llm_start" \
+            --argjson inputs "$llm_inputs" \
+            '{
+                id: $id,
+                parent_run_id: $parent,
+                name: $name,
+                run_type: "llm",
+                inputs: $inputs,
+                start_time: $time,
+                session_name: $project,
+                extra: {metadata: {ls_provider: "anthropic", ls_model_name: "claude-sonnet-4-5"}},
+                tags: ["claude-sonnet-4-5"]
+            }')
 
-            local tool_name
-            tool_name=$(echo "$tool" | jq -r '.name // "tool"')
+        debug "Creating assistant run #$llm_num: $assistant_id"
+        api_call "POST" "/runs" "$assistant_data" > /dev/null
 
-            local tool_input
-            tool_input=$(echo "$tool" | jq '.input // {}')
+        # Build outputs for this LLM call
+        local llm_outputs
+        llm_outputs=$(jq -n --argjson content "$assistant_content" '[{role: "assistant", content: $content}]')
 
-            local tool_use_id
-            tool_use_id=$(echo "$tool" | jq -r '.id // ""')
+        # Create tool runs
+        if [ "$(echo "$tool_uses" | jq 'length')" -gt 0 ]; then
+            # Tools start slightly after LLM start
+            local tool_start="$llm_start"
 
-            local tool_data
-            tool_data=$(jq -n \
-                --arg id "$tool_id" \
-                --arg parent "$assistant_id" \
-                --arg name "$tool_name" \
-                --arg project "$PROJECT" \
-                --arg time "$now" \
-                --argjson input "$tool_input" \
-                '{
-                    id: $id,
-                    parent_run_id: $parent,
-                    name: $name,
-                    run_type: "tool",
-                    inputs: {input: $input},
-                    start_time: $time,
-                    session_name: $project,
-                    tags: ["tool"]
-                }')
+            while IFS= read -r tool; do
+                local tool_id
+                tool_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
-            debug "Creating tool run: $tool_name ($tool_id)"
-            api_call "POST" "/runs" "$tool_data" > /dev/null
+                local tool_name
+                tool_name=$(echo "$tool" | jq -r '.name // "tool"')
 
-            # Find and add tool result
-            local result
-            result=$(find_tool_result "$tool_use_id" "$tool_results")
+                local tool_input
+                tool_input=$(echo "$tool" | jq '.input // {}')
 
-            local tool_end
-            tool_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+                local tool_use_id
+                tool_use_id=$(echo "$tool" | jq -r '.id // ""')
 
-            local tool_update
-            tool_update=$(jq -n \
-                --arg time "$tool_end" \
-                --arg result "$result" \
-                '{
-                    outputs: {output: $result},
-                    end_time: $time
-                }')
+                local tool_data
+                tool_data=$(jq -n \
+                    --arg id "$tool_id" \
+                    --arg parent "$assistant_id" \
+                    --arg name "$tool_name" \
+                    --arg project "$PROJECT" \
+                    --arg time "$tool_start" \
+                    --argjson input "$tool_input" \
+                    '{
+                        id: $id,
+                        parent_run_id: $parent,
+                        name: $name,
+                        run_type: "tool",
+                        inputs: {input: $input},
+                        start_time: $time,
+                        session_name: $project,
+                        tags: ["tool"]
+                    }')
 
-            api_call "PATCH" "/runs/$tool_id" "$tool_update" > /dev/null
+                debug "Creating tool run: $tool_name ($tool_id)"
+                api_call "POST" "/runs" "$tool_data" > /dev/null
 
-            # Add to outputs
-            outputs=$(echo "$outputs" | jq \
-                --arg id "$tool_use_id" \
-                --arg result "$result" \
-                '. += [{role: "tool", tool_call_id: $id, content: [{type: "text", text: $result}]}]')
+                # Find and add tool result
+                local result
+                result=$(find_tool_result "$tool_use_id" "$tool_results")
 
-        done < <(echo "$tool_uses" | jq -c '.[]')
-    fi
+                local tool_end
+                tool_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    # Update assistant run
-    local assistant_end
-    assistant_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+                local tool_update
+                tool_update=$(jq -n \
+                    --arg time "$tool_end" \
+                    --arg result "$result" \
+                    '{
+                        outputs: {output: $result},
+                        end_time: $time
+                    }')
 
-    local assistant_update
-    assistant_update=$(jq -n \
-        --arg time "$assistant_end" \
-        --argjson outputs "$outputs" \
-        '{
-            outputs: {messages: $outputs},
-            end_time: $time
-        }')
+                api_call "PATCH" "/runs/$tool_id" "$tool_update" > /dev/null
 
-    api_call "PATCH" "/runs/$assistant_id" "$assistant_update" > /dev/null
+                # Next tool starts after this one ends
+                tool_start="$tool_end"
 
-    # Update turn run
-    local turn_end
-    turn_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+                # Add to this LLM's outputs
+                llm_outputs=$(echo "$llm_outputs" | jq \
+                    --arg id "$tool_use_id" \
+                    --arg result "$result" \
+                    '. += [{role: "tool", tool_call_id: $id, content: [{type: "text", text: $result}]}]')
+
+            done < <(echo "$tool_uses" | jq -c '.[]')
+        fi
+
+        # Update this assistant run
+        local assistant_end
+        assistant_end=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+        local assistant_update
+        assistant_update=$(jq -n \
+            --arg time "$assistant_end" \
+            --argjson outputs "$llm_outputs" \
+            '{
+                outputs: {messages: $outputs},
+                end_time: $time
+            }')
+
+        api_call "PATCH" "/runs/$assistant_id" "$assistant_update" > /dev/null
+
+        # Save end time for next LLM start
+        last_llm_end="$assistant_end"
+
+        # Add to overall outputs
+        all_outputs=$(echo "$all_outputs" | jq --argjson new "$llm_outputs" '. += $new')
+
+    done < <(echo "$assistant_messages" | jq -c '.[]')
+
+    # Update turn run with all outputs
+    # Filter out user messages from final outputs
+    local turn_outputs
+    turn_outputs=$(echo "$all_outputs" | jq '[.[] | select(.role != "user")]')
+
+    # Use the last LLM's end time as the turn end time
+    local turn_end="$last_llm_end"
 
     local turn_update
     turn_update=$(jq -n \
         --arg time "$turn_end" \
-        --argjson outputs "$outputs" \
+        --argjson outputs "$turn_outputs" \
         '{
             outputs: {messages: $outputs},
             end_time: $time
@@ -422,7 +459,7 @@ create_trace() {
 
     api_call "PATCH" "/runs/$turn_id" "$turn_update" > /dev/null
 
-    log "INFO" "Created turn $turn_num: $turn_id"
+    log "INFO" "Created turn $turn_num: $turn_id with $llm_num LLM call(s)"
 }
 
 # Main function
@@ -478,7 +515,9 @@ main() {
 
     # Group into turns
     local current_user=""
-    local current_assistant=""
+    local current_assistants="[]"  # Array of assistant messages
+    local current_msg_id=""  # Current assistant message ID
+    local current_assistant_parts="[]"  # Parts of current assistant message
     local current_tool_results="[]"
     local turns=0
     local new_last_line=$last_line
@@ -498,45 +537,83 @@ main() {
                 # Add to tool results
                 current_tool_results=$(echo "$current_tool_results" | jq --argjson msg "$line" '. += [$msg]')
             else
-                # New turn
-                if [ -n "$current_user" ] && [ -n "$current_assistant" ]; then
+                # New turn - finalize any pending assistant message
+                if [ -n "$current_msg_id" ] && [ "$(echo "$current_assistant_parts" | jq 'length')" -gt 0 ]; then
+                    # Merge parts and add to assistants array
+                    local merged
+                    merged=$(echo "$current_assistant_parts" | jq -s '
+                        .[0][0] as $base |
+                        (.[0] | map(if has("message") then .message.content else .content end)) as $contents |
+                        ($contents | map(if type == "string" then [{"type":"text","text":.}] else . end) | add) as $merged_content |
+                        $base | if has("message") then .message.content = $merged_content else .content = $merged_content end
+                    ')
+                    current_assistants=$(echo "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]')
+                    current_assistant_parts="[]"
+                    current_msg_id=""
+                fi
+
+                # Create trace for previous turn
+                if [ -n "$current_user" ] && [ "$(echo "$current_assistants" | jq 'length')" -gt 0 ]; then
                     turns=$((turns + 1))
                     local turn_num=$((turn_count + turns))
-                    create_trace "$session_id" "$turn_num" "$current_user" "$current_assistant" "$current_tool_results" || true
+                    create_trace "$session_id" "$turn_num" "$current_user" "$current_assistants" "$current_tool_results" || true
                 fi
+
+                # Start new turn
                 current_user="$line"
-                current_assistant=""
+                current_assistants="[]"
+                current_assistant_parts="[]"
+                current_msg_id=""
                 current_tool_results="[]"
             fi
         elif [ "$role" = "assistant" ]; then
-            if [ -n "$current_assistant" ]; then
-                # Merge content from multiple assistant messages
-                local existing_content
-                existing_content=$(get_content "$current_assistant")
-                local new_content
-                new_content=$(get_content "$line")
+            # Get message ID
+            local msg_id
+            msg_id=$(echo "$line" | jq -r 'if has("message") then .message.id else "" end')
 
-                # Convert to arrays if needed and combine
-                local merged_content
-                merged_content=$(jq -n \
-                    --argjson a "$existing_content" \
-                    --argjson b "$new_content" \
-                    '(if ($a | type) == "string" then [{"type":"text","text":$a}] else $a end) +
-                     (if ($b | type) == "string" then [{"type":"text","text":$b}] else $b end)')
-
-                # Update current_assistant with merged content
-                current_assistant=$(echo "$line" | jq --argjson content "$merged_content" '.message.content = $content')
+            if [ -z "$msg_id" ]; then
+                # No message ID, treat as continuation of current message
+                current_assistant_parts=$(echo "$current_assistant_parts" | jq --argjson msg "$line" '. += [$msg]')
+            elif [ "$msg_id" = "$current_msg_id" ]; then
+                # Same message ID, add to current parts
+                current_assistant_parts=$(echo "$current_assistant_parts" | jq --argjson msg "$line" '. += [$msg]')
             else
-                current_assistant="$line"
+                # New message ID - finalize previous message if any
+                if [ -n "$current_msg_id" ] && [ "$(echo "$current_assistant_parts" | jq 'length')" -gt 0 ]; then
+                    # Merge parts and add to assistants array
+                    local merged
+                    merged=$(echo "$current_assistant_parts" | jq -s '
+                        .[0][0] as $base |
+                        (.[0] | map(if has("message") then .message.content else .content end)) as $contents |
+                        ($contents | map(if type == "string" then [{"type":"text","text":.}] else . end) | add) as $merged_content |
+                        $base | if has("message") then .message.content = $merged_content else .content = $merged_content end
+                    ')
+                    current_assistants=$(echo "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]')
+                fi
+
+                # Start new assistant message
+                current_msg_id="$msg_id"
+                current_assistant_parts=$(jq -n --argjson msg "$line" '[$msg]')
             fi
         fi
     done <<< "$new_messages"
 
-    # Process final turn
-    if [ -n "$current_user" ] && [ -n "$current_assistant" ]; then
+    # Process final turn - finalize any pending assistant message
+    if [ -n "$current_msg_id" ] && [ "$(echo "$current_assistant_parts" | jq 'length')" -gt 0 ]; then
+        local merged
+        merged=$(echo "$current_assistant_parts" | jq -s '
+            .[0][0] as $base |
+            (.[0] | map(if has("message") then .message.content else .content end)) as $contents |
+            ($contents | map(if type == "string" then [{"type":"text","text":.}] else . end) | add) as $merged_content |
+            $base | if has("message") then .message.content = $merged_content else .content = $merged_content end
+        ')
+        current_assistants=$(echo "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]')
+    fi
+
+    if [ -n "$current_user" ] && [ "$(echo "$current_assistants" | jq 'length')" -gt 0 ]; then
         turns=$((turns + 1))
         local turn_num=$((turn_count + turns))
-        create_trace "$session_id" "$turn_num" "$current_user" "$current_assistant" "$current_tool_results" || true
+        create_trace "$session_id" "$turn_num" "$current_user" "$current_assistants" "$current_tool_results" || true
     fi
 
     # Update state
@@ -559,6 +636,7 @@ main() {
 main 2>&1 | head -c 10000  # Limit output to prevent hanging
 
 exit 0
+
 ```
 </Accordion>
 
@@ -612,6 +690,8 @@ For each Claude Code project (a Claude Code project is a directory with Claude C
   }
 }
 ```
+
+<Note> Alternativley, if you want tracing to LangSmith enabled for all Claude Code sessions, you can add the above JSON to your [global Claude Code settings.json](https://code.claude.com/docs/en/settings#:~:text=User%20settings%20are%20defined%20in%20~/.claude/settings.json%20and%20apply%20to%20all%20projects.) file. </Note>
 
 ## 4. Verify Setup
 

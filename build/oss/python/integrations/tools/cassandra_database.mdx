@@ -243,7 +243,7 @@ for tool in tools:
     print(tool.name + "\t- " + tool.description)
 ```
 
-```output
+```text
 Available tools:
 cassandra_db_schema -
     Input to this tool is a keyspace name, output is a table description
@@ -285,7 +285,7 @@ response = agent_executor.invoke({"input": input})
 print(response["output"])
 ```
 
-```output
+```text
 > Entering new AgentExecutor chain...
 
 Invoking: `cassandra_db_schema` with `{'keyspace': 'langchain_agent_test'}`
@@ -391,8 +391,8 @@ Following this query path, we found that the user with the user_id `522b1fe2-2e3
 ---
 
 <Callout icon="pen-to-square" iconType="regular">
-    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/python/integrations/tools/cassandra_database.mdx)
+    [Edit this page on GitHub](https://github.com/langchain-ai/docs/edit/main/src/oss/python/integrations/tools/cassandra_database.mdx) or [file an issue](https://github.com/langchain-ai/docs/issues/new/choose).
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+    [Connect these docs](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

@@ -196,7 +196,7 @@ docs = store.similarity_search(query)
 print(docs[0].page_content)
 ```
 
-```output
+```text
 Pineapple
 ```
 
@@ -210,7 +210,7 @@ docs = store.similarity_search_by_vector(query_vector, k=2)
 print(docs)
 ```
 
-```output
+```python
 [Document(page_content='Pineapple', metadata={'len': 9}), Document(page_content='Banana', metadata={'len': 6})]
 ```
 
@@ -295,15 +295,15 @@ docs = custom_store.similarity_search_by_vector(query_vector, filter="len >= 6")
 print(docs)
 ```
 
-```output
+```python
 [Document(page_content='Pineapple', metadata={'len': 9}), Document(page_content='Banana', metadata={'len': 6}), Document(page_content='Apples and oranges', metadata={'len': 18}), Document(page_content='Cars and airplanes', metadata={'len': 18})]
 ```
 
 ---
 
 <Callout icon="pen-to-square" iconType="regular">
-    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/python/integrations/vectorstores/google_cloud_sql_mysql.mdx)
+    [Edit this page on GitHub](https://github.com/langchain-ai/docs/edit/main/src/oss/python/integrations/vectorstores/google_cloud_sql_mysql.mdx) or [file an issue](https://github.com/langchain-ai/docs/issues/new/choose).
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+    [Connect these docs](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

@@ -185,7 +185,7 @@ Let's ask a simple one.
 chain.invoke({chain.input_key: "What is the climate on Tatooine?"})[chain.output_key]
 ```
 
-```output
+```text
 
 
 > Entering new OntotextGraphDBQAChain chain...
@@ -202,7 +202,7 @@ WHERE {
 > Finished chain.
 ```
 
-```output
+```text
 'The climate on Tatooine is arid.'
 ```
 
@@ -214,7 +214,7 @@ chain.invoke({chain.input_key: "What is the climate on Luke Skywalker's home pla
 ]
 ```
 
-```output
+```text
 > Entering new OntotextGraphDBQAChain chain...
 Generated SPARQL:
 PREFIX : [swapi.co/vocabulary/](https://swapi.co/vocabulary/)
@@ -232,7 +232,7 @@ WHERE {
 > Finished chain.
 ```
 
-```output
+```text
 "The climate on Luke Skywalker's home planet is arid."
 ```
 
@@ -246,7 +246,7 @@ chain.invoke(
 )[chain.output_key]
 ```
 
-```output
+```text
 > Entering new OntotextGraphDBQAChain chain...
 Generated SPARQL:
 PREFIX : [swapi.co/vocabulary/](https://swapi.co/vocabulary/)
@@ -263,7 +263,7 @@ WHERE {
 > Finished chain.
 ```
 
-```output
+```text
 'The average box office revenue for all the Star Wars movies is approximately 754.1 million dollars.'
 ```
 
@@ -377,8 +377,8 @@ from the directory with the Docker compose file.
 ---
 
 <Callout icon="pen-to-square" iconType="regular">
-    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss/python/integrations/graphs/ontotext.mdx)
+    [Edit this page on GitHub](https://github.com/langchain-ai/docs/edit/main/src/oss/python/integrations/graphs/ontotext.mdx) or [file an issue](https://github.com/langchain-ai/docs/issues/new/choose).
 </Callout>
 <Tip icon="terminal" iconType="regular">
-    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+    [Connect these docs](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
 </Tip>

@@ -65,28 +65,22 @@ Use this table to match your requirements to the right pattern:
 
 Different patterns have different performance characteristics. Understanding these tradeoffs helps you choose the right pattern for your latency and cost requirements.
 
-We measure two key metrics:
-- **Model calls**: Number of LLM invocations. More calls = higher latency (especially if sequential) and per-request API costs.
-- **Tokens processed**: Total [context window](/oss/langchain/context-engineering) usage across all calls. More tokens = higher processing costs and potential context window pressure.
+**Key metrics:**
+- **Model calls**: Number of LLM invocations. More calls = higher latency (especially if sequential) and higher per-request API costs.
+- **Tokens processed**: Total [context window](/oss/langchain/context-engineering) usage across all calls. More tokens = higher processing costs and potential context limits.
 
-<Note>
-**When does each metric matter?**
-
-Optimize for **fewer calls** when latency is critical or you're paying per-request. Optimize for **fewer tokens** when context window limits are a concern or token costs dominate your bill. Often there's a tradeoff—patterns that reduce calls may increase tokens per call, and vice versa.
-</Note>
-
-### Scenario 1: Single task
+### One-shot request
 
 > **User:** "Buy milk"
 
-There's a specialized milk agent/skill that can call a `buy_milk` tool.
+A specialized milk agent/skill can call a `buy_milk` tool.
 
 | Pattern | Model calls | Best fit |
 |---------|:-----------:|:--------:|
 | [**Subagents**](/oss/langchain/multi-agent/subagents) | 4 | |
-| [**Handoffs**](/oss/langchain/multi-agent/handoffs) | 3 | ⭐ |
-| [**Skills**](/oss/langchain/multi-agent/skills) | 3 | ⭐ |
-| [**Router**](/oss/langchain/multi-agent/router) | 3 | ⭐ |
+| [**Handoffs**](/oss/langchain/multi-agent/handoffs) | 3 | ✅ |
+| [**Skills**](/oss/langchain/multi-agent/skills) | 3 | ✅ |
+| [**Router**](/oss/langchain/multi-agent/router) | 3 | ✅ |
 
 <Tabs>
   <Tab title="Subagents">
@@ -175,7 +169,7 @@ There's a specialized milk agent/skill that can call a `buy_milk` tool.
 
 **Key insight:** Handoffs, Skills, and Router are most efficient for single tasks (3 calls each). Subagents adds one extra call because results flow back through the main agent—this overhead provides centralized control.
 
-### Scenario 2: Follow-up request
+### Conversational follow-ups
 
 > **Turn 1:** "Buy milk"
 > **Turn 2:** "Buy milk again"
@@ -185,117 +179,137 @@ The user makes a follow-up request in the same conversation.
 | Pattern | Turn 2 calls | Total (both turns) | Best fit |
 |---------|:------------:|:------------------:|:--------:|
 | [**Subagents**](/oss/langchain/multi-agent/subagents) | 4 | 8 | |
-| [**Handoffs**](/oss/langchain/multi-agent/handoffs) | 2 | 5 | ⭐ |
-| [**Skills**](/oss/langchain/multi-agent/skills) | 2 | 5 | ⭐ |
+| [**Handoffs**](/oss/langchain/multi-agent/handoffs) | 2 | 5 | ✅ |
+| [**Skills**](/oss/langchain/multi-agent/skills) | 2 | 5 | ✅ |
 | [**Router**](/oss/langchain/multi-agent/router) | 3 | 6 | |
 
-<Accordion title="Why the difference?">
+<Tabs>
+  <Tab title="Subagents">
+    **4 calls again → 8 total**
 
-**Subagents (4 calls again → 8 total):**
-- Subagents are **stateless by design**—each invocation follows the same flow
-- The main agent maintains conversation context, but subagents start fresh each time
-- This provides strong context isolation but repeats the full flow
+    - Subagents are **stateless by design**—each invocation follows the same flow
+    - The main agent maintains conversation context, but subagents start fresh each time
+    - This provides strong context isolation but repeats the full flow
+  </Tab>
 
-**Handoffs (2 calls → 5 total):**
-- The milk agent is **still active** from turn 1 (state persists)
-- No handoff needed—agent directly calls `buy_milk` tool (call 1)
-- Agent responds to user (call 2)
-- **Saves 1 call by skipping the handoff**
+  <Tab title="Handoffs">
+    **2 calls → 5 total**
 
-**Skills (2 calls → 5 total):**
-- The skill context is **already loaded** in conversation history
-- No need to reload—agent directly calls `buy_milk` tool (call 1)
-- Agent responds to user (call 2)
-- **Saves 1 call by reusing loaded skill**
+    - The milk agent is **still active** from turn 1 (state persists)
+    - No handoff needed—agent directly calls `buy_milk` tool (call 1)
+    - Agent responds to user (call 2)
+    - **Saves 1 call by skipping the handoff**
+  </Tab>
 
-**Router (3 calls again → 6 total):**
-- Routers are **stateless**—each request requires an LLM routing call
-- Turn 2: Router LLM call (1) → Milk agent calls buy_milk (2) → Milk agent responds (3)
-- Can be optimized by wrapping as a tool in a stateful agent
+  <Tab title="Skills">
+    **2 calls → 5 total**
 
-</Accordion>
+    - The skill context is **already loaded** in conversation history
+    - No need to reload—agent directly calls `buy_milk` tool (call 1)
+    - Agent responds to user (call 2)
+    - **Saves 1 call by reusing loaded skill**
+  </Tab>
+
+  <Tab title="Router">
+    **3 calls again → 6 total**
+
+    - Routers are **stateless**—each request requires an LLM routing call
+    - Turn 2: Router LLM call (1) → Milk agent calls buy_milk (2) → Milk agent responds (3)
+    - Can be optimized by wrapping as a tool in a stateful agent
+  </Tab>
+</Tabs>
 
 **Key insight:** Stateful patterns (Handoffs, Skills) save 40-50% of calls on follow-up requests. Subagents maintain consistent cost per request—this stateless design provides strong context isolation but at the cost of repeated model calls.
 
-### Scenario 3: Multiple domains with large context
+### Multi-domain
 
 > **User:** "Compare Python, JavaScript, and Rust for web development"
 
-Each language skill contains ~2000 tokens of documentation. All patterns can make parallel tool calls.
+Each language agent/skill contains ~2000 tokens of documentation. All patterns can make parallel tool calls.
 
 | Pattern | Model calls | Total tokens | Best fit |
 |---------|:-----------:|:------------:|:--------:|
-| [**Subagents**](/oss/langchain/multi-agent/subagents) | 5 | ~9K | ⭐ |
+| [**Subagents**](/oss/langchain/multi-agent/subagents) | 5 | ~9K | ✅ |
 | [**Handoffs**](/oss/langchain/multi-agent/handoffs) | 7+ | ~14K+ | |
 | [**Skills**](/oss/langchain/multi-agent/skills) | 3 | ~15K | |
-| [**Router**](/oss/langchain/multi-agent/router) | 5 | ~9K | ⭐ |
+| [**Router**](/oss/langchain/multi-agent/router) | 5 | ~9K | ✅ |
 
-<Accordion title="Token and call breakdown">
+<Tabs>
+  <Tab title="Subagents">
+    **5 calls, ~9K tokens**
 
-**Subagents (5 calls, ~9K tokens):**
-```
-Call 1: Main agent (1K tokens)
-  ├─ Calls 3 subagents in parallel
-Call 2: Python subagent (2K tokens) ─┐
-Call 3: JavaScript subagent (2K tokens) ├─ Parallel
-Call 4: Rust subagent (2K tokens) ─────┘
-Call 5: Main synthesizes (2K tokens)
+    ```
+    Call 1: Main agent (1K tokens)
+      ├─ Calls 3 subagents in parallel
+    Call 2: Python subagent (2K tokens) ─┐
+    Call 3: JavaScript subagent (2K tokens) ├─ Parallel
+    Call 4: Rust subagent (2K tokens) ─────┘
+    Call 5: Main synthesizes (2K tokens)
 
-Total: 1K + 2K + 2K + 2K + 2K = 9K tokens
-```
+    Total: 1K + 2K + 2K + 2K + 2K = 9K tokens
+    ```
 
-Each subagent works in **isolation** with only its relevant context.
+    Each subagent works in **isolation** with only its relevant context.
+  </Tab>
 
-**Handoffs (7+ calls, ~14K+ tokens):**
-```
-Call 1: Main agent handoff to Python (1K)
-Call 2-3: Python agent researches (2-3 calls, ~2K each)
-Call 4: Handoff to JavaScript agent (included in Python's response)
-Call 5-6: JavaScript agent researches (2-3 calls, ~2K each)
-Call 7: Handoff to Rust agent (included in JS's response)
-Call 8-9: Rust agent researches (2-3 calls, ~2K each)
+  <Tab title="Handoffs">
+    **7+ calls, ~14K+ tokens**
 
-Total: ~14K+ tokens across sequential handoffs
-```
+    ```
+    Call 1: Main agent handoff to Python (1K)
+    Call 2-3: Python agent researches (2-3 calls, ~2K each)
+    Call 4: Handoff to JavaScript agent (included in Python's response)
+    Call 5-6: JavaScript agent researches (2-3 calls, ~2K each)
+    Call 7: Handoff to Rust agent (included in JS's response)
+    Call 8-9: Rust agent researches (2-3 calls, ~2K each)
 
-Handoffs executes **sequentially**—can't research all three languages in parallel. Growing conversation history adds overhead.
+    Total: ~14K+ tokens across sequential handoffs
+    ```
 
-**Router (5 calls, ~9K tokens):**
-```
-Call 1: Router LLM analyzes query (1K tokens)
-  ├─ Routes to Python, JavaScript, Rust agents
-Call 2: Python agent (2K tokens) ─┐
-Call 3: JavaScript agent (2K tokens) ├─ Parallel
-Call 4: Rust agent (2K tokens) ─────┘
-Call 5: Synthesis LLM combines results (2K tokens)
+    Handoffs executes **sequentially**—can't research all three languages in parallel. Growing conversation history adds overhead.
+  </Tab>
 
-Total: 1K + 2K + 2K + 2K + 2K = 9K tokens
-```
+  <Tab title="Skills">
+    **3 calls, ~15K tokens**
 
-Router uses an **LLM for routing**, then invokes agents in parallel. Similar to Subagents but with explicit routing step.
+    ```
+    Call 1: Load 3 skills (1K tokens)
+      └─ Adds Python (2K) + JavaScript (2K) + Rust (2K) = 6K to context
 
-**Skills (3 calls, ~15K tokens):**
-```
-Call 1: Load 3 skills (1K tokens)
-  └─ Adds Python (2K) + JavaScript (2K) + Rust (2K) = 6K to context
+    Call 2: Research (7K tokens)
+      └─ Base (1K) + ALL skill contexts (6K) = 7K total
 
-Call 2: Research (7K tokens)
-  └─ Base (1K) + ALL skill contexts (6K) = 7K total
+    Call 3: Synthesize (7K tokens)
+      └─ Base (1K) + ALL skill contexts (6K) = 7K total
 
-Call 3: Synthesize (7K tokens)
-  └─ Base (1K) + ALL skill contexts (6K) = 7K total
+    Total: 1K + 7K + 7K = 15K tokens
+    ```
 
-Total: 1K + 7K + 7K = 15K tokens
-```
+    After loading, **every subsequent call processes all 6K tokens of skill documentation**.
 
-After loading, **every subsequent call processes all 6K tokens of skill documentation**.
+    **The trade-off:**
+    - Skills: ✅ Fewer calls (3) → ❌ Higher tokens per call (7K+)
+    - Subagents: ❌ More calls (5) → ✅ Lower tokens per call (1-2K)
+    - **Result:** Subagents processes 67% fewer tokens overall
+  </Tab>
 
-**The trade-off:**
-- Skills: ✅ Fewer calls (3) → ❌ Higher tokens per call (7K+)
-- Subagents: ❌ More calls (5) → ✅ Lower tokens per call (1-2K)
-- **Result:** Subagents processes 67% fewer tokens overall
+  <Tab title="Router">
+    **5 calls, ~9K tokens**
 
-</Accordion>
+    ```
+    Call 1: Router LLM analyzes query (1K tokens)
+      ├─ Routes to Python, JavaScript, Rust agents
+    Call 2: Python agent (2K tokens) ─┐
+    Call 3: JavaScript agent (2K tokens) ├─ Parallel
+    Call 4: Rust agent (2K tokens) ─────┘
+    Call 5: Synthesis LLM combines results (2K tokens)
+
+    Total: 1K + 2K + 2K + 2K + 2K = 9K tokens
+    ```
+
+    Router uses an **LLM for routing**, then invokes agents in parallel. Similar to Subagents but with explicit routing step.
+  </Tab>
+</Tabs>
 
 **Key insight:** For multi-domain tasks, patterns with parallel execution (Subagents, Router) are most efficient. Skills has fewer calls but high token usage due to context accumulation. Handoffs is inefficient here—it must execute sequentially and can't leverage parallel tool calling for consulting multiple domains simultaneously.
 
@@ -307,16 +321,27 @@ After loading, **every subsequent call processes all 6K tokens of skill document
 
 Here's how patterns compare across all three scenarios:
 
-| Pattern | Single task | Follow-up | Multiple domains | Best for |
-|---------|:-----------:|:---------:|:----------------:|----------|
-| [**Subagents**](/oss/langchain/multi-agent/subagents) | 4 calls | 8 calls (4+4) | 5 calls, 9K tokens | Parallel execution, context isolation, distributed teams |
-| [**Handoffs**](/oss/langchain/multi-agent/handoffs) | 3 calls | 5 calls (3+2) | 7+ calls, 14K+ tokens | Multi-turn conversations, direct user interaction, sequential workflows |
-| [**Skills**](/oss/langchain/multi-agent/skills) | 3 calls | 5 calls (3+2) | 3 calls, 15K tokens | 1-2 lightweight skills, simple context needs |
-| [**Router**](/oss/langchain/multi-agent/router) | 3 calls | 6 calls (3+3) | 5 calls, 9K tokens | Parallel execution, distinct verticals, explicit routing logic |
+<div className="compact-first-col">
+
+| Pattern | One-shot | Follow-ups | Multi-domain |
+|---------|:-----------:|:---------:|:----------------:|
+| [**Subagents**](/oss/langchain/multi-agent/subagents) | 4 calls | 8 calls (4+4) | 5 calls, 9K tokens |
+| [**Handoffs**](/oss/langchain/multi-agent/handoffs) | 3 calls | 5 calls (3+2) | 7+ calls, 14K+ tokens |
+| [**Skills**](/oss/langchain/multi-agent/skills) | 3 calls | 5 calls (3+2) | 3 calls, 15K tokens |
+| [**Router**](/oss/langchain/multi-agent/router) | 3 calls | 6 calls (3+3) | 5 calls, 9K tokens |
+
+</div>
 
 **Choosing a pattern:**
-- **Optimize for single requests?** → Handoffs, Skills, or Router (3 calls each)
-- **Optimize for conversations?** → Handoffs or Skills (stateful, save calls on follow-ups)
-- **Need parallel execution?** → Subagents or Router (invoke multiple agents simultaneously)
-- **Multiple large-context domains?** → Subagents or Router (context isolation prevents bloat)
-- **Simple, focused task?** → Skills (lightweight, minimal overhead)
+
+<div className="compact-first-col">
+
+| Optimize for | [Subagents](/oss/langchain/multi-agent/subagents) | [Handoffs](/oss/langchain/multi-agent/handoffs) | [Skills](/oss/langchain/multi-agent/skills) | [Router](/oss/langchain/multi-agent/router) |
+|--------------|:---------:|:--------:|:------:|:------:|
+| Single requests | | ✅ | ✅ | ✅ |
+| Multi-turn conversations | | ✅ | ✅ | |
+| Parallel execution | ✅ | | | ✅ |
+| Large-context domains | ✅ | | | ✅ |
+| Simple, focused tasks | | | ✅ | |
+
+</div>

@@ -1,8 +1,10 @@
 ---
 title: Tools
-sidebarTitle: Tools
 ---
-## Built-in Tools
+
+You can access a variety of tools in Agent Builder, including [built-in tools](#built-in-tools) and [tools from remote MCP servers](#remote-mcp-server-tools).
+
+## Built-in tools
 
 Use these built-in tools to give your agents access to email, calendars, chat, project management, code hosting, spreadsheets/BI, search, social, and general web utilities.
 
@@ -134,9 +136,15 @@ Use these built-in tools to give your agents access to email, calendars, chat, p
   </Card>
 </CardGroup>
 
-## Using remote MCP servers
+## Remote MCP server tools
 
 Agent Builder can discover and use tools from remote [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. This lets you connect to external MCP servers and use their tools in your agents.
+
+### How it works
+
+- Agent Builder discovers tools from remote MCP servers via the standard MCP protocol.
+- Headers configured in your workspace are automatically attached when fetching tools or calling them.
+- Tools from remote servers are available alongside built-in tools in Agent Builder.
 
 ### Configuration
 
@@ -149,9 +157,3 @@ Configure remote MCP servers in your LangSmith [workspace](/langsmith/administra
 <Note>
 Use workspace secret placeholders like `{{MCP_TOKEN}}` in headers. The platform resolves these from your workspace secrets at runtime.
 </Note>
-
-### How it works
-
-- Agent Builder discovers tools from remote MCP servers via the standard MCP protocol.
-- Headers configured in your workspace are automatically attached when fetching tools or calling them.
-- Tools from remote servers are available alongside built-in tools in Agent Builder.

@@ -728,23 +728,36 @@ def _get_interrupt_decisions(interrupt: Interrupt) -> list[dict]:
         for request in interrupt.value["action_requests"]
     ]
 
-decisions = []
+decisions = {}
 for interrupt in interrupts:
-    decisions.extend(_get_interrupt_decisions(interrupt))
+    decisions[interrupt.id] = {
+        "decisions": _get_interrupt_decisions(interrupt)
+    }
 
 decisions
 ```
 ```shell title="Output"
-[{'type': 'edit',
-  'edited_action': {'name': 'get_weather', 'args': {'city': 'Boston, U.K.'}}},
- {'type': 'approve'}]
+{
+    'a96c40474e429d661b5b32a8d86f0f3e': {
+        'decisions': [
+            {
+                'type': 'edit',
+                 'edited_action': {
+                     'name': 'get_weather',
+                     'args': {'city': 'Boston, U.K.'}
+                 }
+            },
+            {'type': 'approve'},
+        ]
+    }
+}
 ```
 
 We can then resume by passing a [command](/oss/langchain/human-in-the-loop#responding-to-interrupts) into the same streaming loop:
 ```python
 interrupts = []
 for stream_mode, data in agent.stream(
-    Command(resume={"decisions": decisions}),
+    Command(resume=decisions),  # [!code highlight]
     config=config,
     stream_mode=["messages", "updates"],
 ):

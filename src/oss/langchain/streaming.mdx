@@ -518,15 +518,16 @@ Below we include short, end-to-end snippets representing common use-cases for st
 
 ### Streaming tool calls
 
-You may want to stream both:
+You may want to stream:
 
 1. Partial JSON as [tool calls](/oss/langchain/models#tool-calling) are generated
 2. The completed, parsed tool calls that are executed
+3. Tool responses and other events
 
-To do this, apply both [`"messages"`](#llm-tokens) and [`"updates"`](#agent-progress) streaming modes. The `"messages"` streaming mode will include [message chunks](/oss/langchain/messages#streaming-and-chunks) from all LLM calls in the agent. The `"updates"` mode will include completed messages with tool calls before they are routed to tools for execution.
+To do this, apply both [`"messages"`](#llm-tokens) and [`"updates"`](#agent-progress) streaming modes. The `"messages"` streaming mode will include [message chunks](/oss/langchain/messages#streaming-and-chunks) from all LLM calls in the agent. The `"updates"` mode will include completed messages that are tracked in the agent's [state](/oss/langchain/agents#memory).
 
 <Note>
-For a message to surface when streaming mode is `"updates"`, it must be represented in the Agent's [state](/oss/langchain/agents#memory) (as in the default state for [`create_agent`](/oss/langchain/agents)). If this is not the case, you can use [custom updates](#custom-updates) to capture the message.
+If outputs from LLM calls are tracked in the agent's state, you can access aggregated messages (including parsed tool calls) using `stream_mode="updates"`. Below, we demonstrate how to aggregate the completed message from any LLM call.
 </Note>
 <Note>
 Refer to the section below on [streaming from sub-agents](#streaming-from-sub-agents) if your agent includes multiple LLMs.
@@ -536,7 +537,7 @@ Refer to the section below on [streaming from sub-agents](#streaming-from-sub-ag
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.messages import AIMessage, AnyMessage
+from langchain.messages import AIMessageChunk, AnyMessage
 
 
 def get_weather(city: str) -> str:
@@ -548,7 +549,7 @@ def get_weather(city: str) -> str:
 agent = create_agent("openai:gpt-5.2", tools=[get_weather])
 
 
-def _process_message_chunk(token: AIMessage) -> None:
+def _render_message_chunk(token: AIMessageChunk) -> None:
     if token.text:
         print(token.text, end="|")
     if token.tool_call_chunks:
@@ -556,33 +557,31 @@ def _process_message_chunk(token: AIMessage) -> None:
     # N.B. all content is available through token.content_blocks
 
 
-def _process_completed_message(source: str, message: AnyMessage) -> None:
-    if source == "model" and isinstance(message, AIMessage) and message.tool_calls:
-        print(f"Tool calls: {message.tool_calls}")
-    if source == "tools":
-        print(f"Tool response: {message.content_blocks}")
-
-
-def _process_stream(stream_mode: str, data: Any) -> None:
-    if stream_mode == "messages":
-        token, metadata = data
-        if (
-            metadata["langgraph_node"] == "model"
-            and isinstance(token, AIMessage)  # help type-checking
-        ):
-            _process_message_chunk(token)  # [!code highlight]
-    if stream_mode == "updates":
-        for source, update in data.items():
-            if source in ("model", "tools"):
-                _process_completed_message(source, update["messages"][-1])  # [!code highlight]
-
-
 input_message = {"role": "user", "content": "What is the weather in Boston?"}
+full_message = None
 for stream_mode, data in agent.stream(
     {"messages": [input_message]},
-    stream_mode=["messages", "updates"],  # [!code highlight]
+    stream_mode=["messages", "updates"],
 ):
-    _process_stream(stream_mode, data)
+    if stream_mode == "messages":
+        # Handle LLM streaming output
+        token, metadata = data
+
+        if isinstance(token, AIMessageChunk):
+            # Can also use `metadata` to subset by node or other parameters
+            _render_message_chunk(token)
+            full_message = token if full_message is None else full_message + token
+            if token.chunk_position == "last":
+                if full_message.tool_calls:
+                    print(f"Tool calls: {full_message.tool_calls}")
+                full_message = None
+
+    if stream_mode == "updates":
+        for source, update in data.items():
+            # `source` is the name of the node generating the update
+            if source == "tools":
+                tool_message = update["messages"][-1]
+                print(f"Tool response: {tool_message.content_blocks}")
 ```
 ```shell title="Output" expandable
 [{'name': 'get_weather', 'args': '', 'id': 'call_D3Orjr89KgsLTZ9hTzYv7Hpf', 'index': 0, 'type': 'tool_call_chunk'}]
@@ -609,7 +608,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware
-from langchain.messages import AIMessage, AnyMessage
+from langchain.messages import AIMessageChunk, AnyMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command, Interrupt
 
@@ -632,43 +631,17 @@ agent = create_agent(
 )
 
 
-def _process_message_chunk(token: AIMessage) -> None:
+def _render_message_chunk(token: AIMessageChunk) -> None:
     if token.text:
         print(token.text, end="|")
     if token.tool_call_chunks:
         print(token.tool_call_chunks)
 
 
-def _process_completed_message(source: str, message: AnyMessage) -> None:
-    if source == "model" and isinstance(message, AIMessage) and message.tool_calls:
-        print(f"Tool calls: {message.tool_calls}")
-    if source == "tools":
-        print(f"Tool response: {message.content_blocks}")
-
-
-def _process_interrupt(interrupt: Interrupt) -> None:  # [!code highlight]
+def _render_interrupt(interrupt: Interrupt) -> None:  # [!code highlight]
     interrupts = interrupt.value  # [!code highlight]
     for request in interrupts["action_requests"]:  # [!code highlight]
         print(request["description"])  # [!code highlight]
-
-
-def _process_stream(stream_mode: str, data: Any) -> list[Interrupt]:
-    interrupts = []
-    if stream_mode == "messages":
-        token, metadata = data
-        if (
-            metadata["langgraph_node"] == "model"
-            and isinstance(token, AIMessage)  # help type-checking
-        ):
-            _process_message_chunk(token)
-    if stream_mode == "updates":
-        for source, update in data.items():
-            if source in ("model", "tools"):
-                _process_completed_message(source, update["messages"][-1])
-            if source == "__interrupt__":  # [!code highlight]
-                interrupts.extend(update)  # [!code highlight]
-                _process_interrupt(update[0])  # [!code highlight]
-    return interrupts
 
 
 input_message = {
@@ -678,13 +651,34 @@ input_message = {
     ),
 }
 config = {"configurable": {"thread_id": "some_id"}}  # [!code highlight]
+full_message = None
 interrupts = []  # [!code highlight]
 for stream_mode, data in agent.stream(
     {"messages": [input_message]},
     config=config,  # [!code highlight]
     stream_mode=["messages", "updates"],
 ):
-    interrupts.extend(_process_stream(stream_mode, data))  # [!code highlight]
+    if stream_mode == "messages":
+        # Handle LLM streaming output
+        token, metadata = data
+
+        if isinstance(token, AIMessageChunk):
+            # Can also use `metadata` to subset by node or other parameters
+            _render_message_chunk(token)
+            full_message = token if full_message is None else full_message + token
+            if token.chunk_position == "last":
+                if full_message.tool_calls:
+                    print(f"Tool calls: {full_message.tool_calls}")
+                full_message = None
+
+    if stream_mode == "updates":
+        for source, update in data.items():
+            if source == "tools":
+                tool_message = update["messages"][-1]
+                print(f"Tool response: {tool_message.content_blocks}")
+            if source == "__interrupt__":  # [!code highlight]
+                interrupts.extend(update)  # [!code highlight]
+                _render_interrupt(update[0])  # [!code highlight]
 ```
 ```shell title="Output" expandable
 [{'name': 'get_weather', 'args': '', 'id': 'call_GOwNaQHeqMixay2qy80padfE', 'index': 0, 'type': 'tool_call_chunk'}]
@@ -755,13 +749,33 @@ decisions
 
 We can then resume by passing a [command](/oss/langchain/human-in-the-loop#responding-to-interrupts) into the same streaming loop:
 ```python
+full_message = None
 interrupts = []
 for stream_mode, data in agent.stream(
     Command(resume=decisions),  # [!code highlight]
     config=config,
     stream_mode=["messages", "updates"],
 ):
-    interrupts.extend(_process_stream(stream_mode, data))
+    # Streaming loop is unchanged
+    if stream_mode == "messages":
+        token, metadata = data
+
+        if isinstance(token, AIMessageChunk):
+            _render_message_chunk(token)
+            full_message = token if full_message is None else full_message + token
+            if token.chunk_position == "last":
+                if full_message.tool_calls:
+                    print(f"Tool calls: {full_message.tool_calls}")
+                full_message = None
+
+    if stream_mode == "updates":
+        for source, update in data.items():
+            if source == "tools":
+                tool_message = update["messages"][-1]
+                print(f"Tool response: {tool_message.content_blocks}")
+            if source == "__interrupt__":
+                interrupts.extend(update)
+                _render_interrupt(update[0])
 ```
 ```shell title="Output"
 Tool response: [{'type': 'text', 'text': "It's always sunny in Boston, U.K.!"}]
@@ -793,7 +807,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain.messages import AIMessage, AnyMessage
+from langchain.messages import AIMessageChunk, AnyMessage
 
 
 def get_weather(city: str) -> str:
@@ -827,48 +841,44 @@ agent = create_agent(model=supervisor_model, tools=[call_weather_agent])
 ```
 Next, we add logic to the streaming loop to report which agent is emitting tokens:
 ```python
-def _process_message_chunk(token: AIMessage) -> None:
+def _render_message_chunk(token: AIMessageChunk) -> None:
     if token.text:
         print(token.text, end="|")
     if token.tool_call_chunks:
         print(token.tool_call_chunks)
 
 
-def _process_completed_message(source: str, message: AnyMessage) -> None:
-    if source == "model" and isinstance(message, AIMessage) and message.tool_calls:
-        print(f"Tool calls: {message.tool_calls}")
-    if source == "tools":
-        print(f"Tool response: {message.content_blocks}")
-
-
-def _process_stream(stream_mode: str, data: Any) -> None:
-    if stream_mode == "messages":
-        token, metadata = data
-        if (
-            metadata["langgraph_node"] == "model"
-            and isinstance(token, AIMessage)  # help type-checking
-        ):
-            _process_message_chunk(token)
-    if stream_mode == "updates":
-        for source, update in data.items():
-            if source in ("model", "tools"):
-                _process_completed_message(source, update["messages"][-1])
-
-
 input_message = {"role": "user", "content": "What is the weather in Boston?"}
+full_message = None
 current_agent = None  # [!code highlight]
 for _, stream_mode, data in agent.stream(
     {"messages": [input_message]},
     stream_mode=["messages", "updates"],
     subgraphs=True,  # [!code highlight]
 ):
-    if stream_mode == "messages":  # [!code highlight]
-        if tags := data[1].get("tags", []):  # get tags from metadata  # [!code highlight]
-            this_agent = tags[0]  # [!code highlight]
-            if this_agent != current_agent:  # [!code highlight]
-                print(f"🤖 {this_agent}: ")  # [!code highlight]
-                current_agent = this_agent  # [!code highlight]
-    _process_stream(stream_mode, data)
+    if stream_mode == "messages":
+        token, metadata = data
+
+        if isinstance(token, AIMessageChunk):
+            if tags := metadata.get("tags", []):  # [!code highlight]
+                this_agent = tags[0]  # [!code highlight]
+                if this_agent != current_agent:  # [!code highlight]
+                    print(f"🤖 {this_agent}: ")  # [!code highlight]
+                    current_agent = this_agent  # [!code highlight]
+
+            _render_message_chunk(token)
+            full_message = token if full_message is None else full_message + token
+            if token.chunk_position == "last":
+                if full_message.tool_calls:
+                    print(f"Tool calls: {full_message.tool_calls}")
+                full_message = None
+
+    if stream_mode == "updates":
+        for source, update in data.items():
+            # `source` is the name of the node generating the update
+            if source == "tools":
+                tool_message = update["messages"][-1]
+                print(f"Tool response: {tool_message.content_blocks}")
 ```
 ```shell title="Output" expandable
 🤖 supervisor:

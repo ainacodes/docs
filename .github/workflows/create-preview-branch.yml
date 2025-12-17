@@ -232,15 +232,10 @@ jobs:
           script: |
             const preview = `${{ needs.create-preview.outputs.preview_branch }}`;
             const projectId = process.env.MINTLIFY_PROJECT_ID;
-            const previewUrl = projectId
-              ? `https://${projectId}-${preview}.mintlify.app`
-              : null;
-            const body = previewUrl
-              ? `🔗 **Mintlify Preview**: [${preview}](${previewUrl})`
-              : `Mintlify preview branch: ${preview}\n\n_Set the \`MINTLIFY_PROJECT_ID\` repository variable to enable preview links._`;
+            const previewUrl = `https://${projectId}-${preview}.mintlify.app`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body
+              body: `🔗 **Mintlify Preview**: [${preview}](${previewUrl})`
             });
